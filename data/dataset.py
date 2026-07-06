@@ -40,10 +40,28 @@ class FXPanel:
     source: str = "synthetic"  # "synthetic" or "real", for reporting/labelling
 
 
+# The FinBERT model load (~10s) and per-bar scoring pass are independent of
+# the training seed, so both are cached module-wide for multi-seed runs.
+_SCORER_SINGLETON = None
+_SENTIMENT_FEATURE_CACHE: dict = {}
+
+
+def _get_scorer() -> FinBERTSentimentScorer:
+    global _SCORER_SINGLETON
+    if _SCORER_SINGLETON is None:
+        _SCORER_SINGLETON = FinBERTSentimentScorer()
+    return _SCORER_SINGLETON
+
+
 def _assemble_panel(ohlc: pd.DataFrame, macro: pd.DataFrame, news: pd.DataFrame, source: str) -> FXPanel:
     tech = compute_technical_features(ohlc)
-    scorer = FinBERTSentimentScorer()
-    sentiment = build_sentiment_features(news, scorer)
+    scorer = _get_scorer()
+    cache_key = (len(news), hash(tuple(news["text"].fillna("").tolist())))
+    if cache_key in _SENTIMENT_FEATURE_CACHE:
+        sentiment = _SENTIMENT_FEATURE_CACHE[cache_key]
+    else:
+        sentiment = build_sentiment_features(news, scorer)
+        _SENTIMENT_FEATURE_CACHE[cache_key] = sentiment
 
     assert tech.shape[1] == DATA_CFG.n_technical_features
     assert macro.shape[1] == DATA_CFG.n_macro_features
@@ -69,6 +87,61 @@ def _assemble_panel(ohlc: pd.DataFrame, macro: pd.DataFrame, news: pd.DataFrame,
     )
 
 
+# Live fetches and FinBERT scoring are deterministic given the market data,
+# so multi-seed runs (which only vary model initialisation/training order)
+# reuse one fetch instead of hammering the feeds once per seed. Keyed by
+# (ticker, interval, count).
+_REAL_FETCH_CACHE: dict = {}
+
+
+def _export_intermediates(real: dict, exports_dir: str = "exports") -> None:
+    """Write the intermediate real-data artifacts as CSVs for analysis:
+    raw OHLCV from yfinance, every extracted headline with its FinBERT
+    polarity/confidence score, and (later, from _assemble_panel via
+    export_sentiment_features) the per-bar sentiment feature panel.
+    Failures are non-fatal -- exports must never break a training run.
+    """
+    import os
+
+    try:
+        os.makedirs(exports_dir, exist_ok=True)
+        real["ohlc"].to_csv(os.path.join(exports_dir, "fx_prices_yfinance.csv"))
+
+        news = real.get("news_raw")
+        if news is not None and not news.empty:
+            scorer = FinBERTSentimentScorer()
+            texts = (news["title"].fillna("") + ". " + news["summary"].fillna("")).tolist()
+            scored = scorer.score_batch(texts)
+            out = news.copy()
+            out["polarity"] = [p for p, _ in scored]
+            out["confidence"] = [c for _, c in scored]
+            out["scorer_backend"] = scorer.backend
+            out.to_csv(os.path.join(exports_dir, "news_headlines_scored.csv"), index=False)
+        print(f"[data] Intermediate CSVs written to {exports_dir}/ "
+              f"(fx_prices_yfinance.csv, news_headlines_scored.csv)")
+    except Exception as e:
+        warnings.warn(f"Intermediate CSV export failed (non-fatal): {type(e).__name__}: {e}")
+
+
+def export_sentiment_features(panel: FXPanel, exports_dir: str = "exports") -> None:
+    """Write the per-bar fused sentiment features (+ close price) to CSV."""
+    import os
+
+    try:
+        os.makedirs(exports_dir, exist_ok=True)
+        sent_cols = [i for i, n in enumerate(panel.feature_names) if n.startswith(("sent_", "sig_", "headline_"))]
+        df = pd.DataFrame(
+            panel.features[:, sent_cols],
+            columns=[panel.feature_names[i] for i in sent_cols],
+            index=panel.dates,
+        )
+        df.insert(0, "close", panel.close)
+        df.to_csv(os.path.join(exports_dir, "sentiment_features_per_bar.csv"))
+        print(f"[data] Per-bar sentiment features written to {exports_dir}/sentiment_features_per_bar.csv")
+    except Exception as e:
+        warnings.warn(f"Sentiment feature CSV export failed (non-fatal): {type(e).__name__}: {e}")
+
+
 def build_fx_panel(
     pair: str = "XAU/USD",
     n_days: int = 1500,
@@ -77,17 +150,27 @@ def build_fx_panel(
     signal_strength: float = 0.35,
     real_ticker: str = "GC=F",
     real_interval: str = "5m",
-    real_count: int = 1000,
+    real_count: int = None,
 ) -> FXPanel:
     """Assemble the full multi-modal panel for one currency pair.
 
-    source="real": tries live Yahoo Finance / FXStreet feeds first; on any
-    failure (as will happen in a network-restricted sandbox), prints a
+    source="real": tries live Yahoo Finance / GDELT / RSS feeds first; on
+    any failure (as will happen in a network-restricted sandbox), prints a
     clear warning and falls back to the signal-linked synthetic generator
-    so the pipeline always returns something runnable.
+    so the pipeline always returns something runnable. `real_count`
+    defaults to `n_days`, so `--n_days 5000` requests 5,000 live candles.
     """
     if source == "real":
-        real = try_fetch_real_panel(ticker_symbol=real_ticker, interval=real_interval, count=real_count)
+        real_count = real_count or n_days
+        cache_key = (real_ticker, real_interval, real_count)
+        if cache_key in _REAL_FETCH_CACHE:
+            real = _REAL_FETCH_CACHE[cache_key]
+            print(f"[data] Reusing cached live fetch for {cache_key} (multi-seed run).")
+        else:
+            real = try_fetch_real_panel(ticker_symbol=real_ticker, interval=real_interval, count=real_count)
+            if real is not None:
+                _REAL_FETCH_CACHE[cache_key] = real
+                _export_intermediates(real)
         if real is not None:
             ohlc = real["ohlc"]
             # No live macro feed was supplied alongside fxratefeed/fxnewsfeed,
@@ -95,8 +178,10 @@ def build_fx_panel(
             macro = _synthetic_macro_stream(ohlc.index, seed=seed + 1)
             news = real["news_aligned"]
             print(f"[data] Using LIVE data: {len(ohlc)} candles from Yahoo Finance, "
-                  f"{real['n_raw_headlines']} raw headlines from FXStreet.")
-            return _assemble_panel(ohlc, macro, news, source="real")
+                  f"{real['n_raw_headlines']} raw headlines (GDELT + RSS).")
+            panel = _assemble_panel(ohlc, macro, news, source="real")
+            export_sentiment_features(panel)
+            return panel
         else:
             warnings.warn(
                 "Live rate/news feeds were unreachable (see warnings above) -- "

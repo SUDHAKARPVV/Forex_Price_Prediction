@@ -192,20 +192,121 @@ def fetch_fxstreet_feed(feed_url: str, retries: int = 2, timeout: int = 10) -> p
     return df
 
 
+def fetch_gdelt_news(
+    query: str = '("gold price" OR "gold prices" OR "gold market" OR "gold rally" OR bullion)',
+    days: int = 60,
+    window_days: int = 5,
+    max_per_window: int = 250,
+    timeout: int = 45,
+) -> pd.DataFrame:
+    """Fetch HISTORICAL headlines from the free GDELT DOC 2.0 API.
+
+    The RSS feeds above only expose the last ~30-50 articles (a day or two
+    of coverage), which leaves most of a 60-day / 5,000-candle window with
+    no news at all. GDELT indexes worldwide news continuously and lets us
+    query the full trailing window in date-bounded slices, giving every
+    bar a realistic chance of nearby headlines. English-language filter is
+    applied via the API's sourcelang operator. Returns the same
+    (timestamp, title, summary, link) schema as the RSS path; empty
+    DataFrame (never raises) on failure.
+    """
+    try:
+        import requests
+    except ImportError:
+        warnings.warn("requests is not installed; skipping GDELT news fetch.")
+        return pd.DataFrame()
+
+    base = "https://api.gdeltproject.org/api/v2/doc/doc"
+    now = datetime.utcnow()
+    articles = []
+    _gdelt_cooled_down = [False]  # one long cool-down per fetch, max
+    n_windows = max(1, days // window_days)
+    for w in range(n_windows):
+        end = now - pd.Timedelta(days=w * window_days)
+        start = end - pd.Timedelta(days=window_days)
+        params = {
+            "query": f"{query} sourcelang:english",
+            "mode": "artlist",
+            "maxrecords": str(max_per_window),
+            "format": "json",
+            "sort": "datedesc",
+            "startdatetime": start.strftime("%Y%m%d%H%M%S"),
+            "enddatetime": end.strftime("%Y%m%d%H%M%S"),
+        }
+        # GDELT enforces "at most one request every 5 seconds" and applies
+        # an extended penalty window after violations. Strategy: one
+        # attempt per window at 10s spacing; on the first 429, take a
+        # single long cool-down and retry once, then accept partial
+        # coverage rather than fighting the limiter.
+        payload = None
+        reason = None
+        for attempt in (1, 2):
+            try:
+                resp = requests.get(base, params=params, headers=BROWSER_HEADERS, timeout=timeout)
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    break
+                reason = f"HTTP {resp.status_code}"
+            except Exception as e:
+                reason = f"{type(e).__name__}: {e}"
+            if attempt == 1 and reason == "HTTP 429" and not _gdelt_cooled_down[0]:
+                _gdelt_cooled_down[0] = True
+                print("[real_data_feed] GDELT rate limit hit; cooling down 60s once...")
+                time.sleep(60.0)
+            else:
+                break  # don't burn more time retrying inside one window
+        if payload is None:
+            print(f"[real_data_feed] GDELT window {w+1}/{n_windows} failed ({reason}); continuing...")
+            time.sleep(10.0)
+            continue
+        for art in payload.get("articles", []):
+            seen = art.get("seendate", "")  # e.g. 20260707T031500Z
+            try:
+                ts = datetime.strptime(seen, "%Y%m%dT%H%M%SZ")
+            except ValueError:
+                continue
+            articles.append({
+                "timestamp": ts,
+                "title": art.get("title", ""),
+                "summary": "",  # GDELT artlist mode carries titles only
+                "link": art.get("url", ""),
+            })
+        time.sleep(10.0)  # GDELT rate limit: stay well above one request per 5 seconds
+
+    df = pd.DataFrame(articles)
+    if df.empty:
+        print("[real_data_feed] GDELT returned no articles (API unreachable or empty result).")
+        return df
+    df = df.drop_duplicates(subset=["title"]).sort_values("timestamp").reset_index(drop=True)
+    print(f"[real_data_feed] GDELT news OK: {len(df)} unique headlines covering the trailing {days} days.")
+    return df
+
+
 def fetch_all_news(feed_urls=None) -> pd.DataFrame:
     """Try every feed in `feed_urls` (default: FXStreet + fallbacks) and
     concatenate whatever succeeds. Only returns empty if ALL feeds fail --
     prints a per-feed diagnostic either way so failures are visible.
     """
+    import os
+
     feed_urls = feed_urls or DEFAULT_NEWS_FEEDS
     frames = []
+    # Historical depth first: GDELT covers the whole trailing 60 days,
+    # RSS feeds only the most recent day or two (freshest headlines,
+    # including some GDELT hasn't indexed yet). The fetch takes ~2 minutes
+    # due to GDELT's strict rate limit, so FX_SKIP_GDELT=1 (set by the
+    # test suite) skips it.
+    if os.environ.get("FX_SKIP_GDELT") != "1":
+        gdelt = fetch_gdelt_news()
+        if not gdelt.empty:
+            frames.append(gdelt)
     for url in feed_urls:
         f = fetch_fxstreet_feed(url)
         if not f.empty:
             frames.append(f)
     if not frames:
         warnings.warn(
-            f"All {len(feed_urls)} news feeds were unreachable or empty. "
+            f"GDELT and all {len(feed_urls)} RSS news feeds were unreachable or empty. "
             "See the [real_data_feed] diagnostics above for the reason each one failed."
         )
         return pd.DataFrame()
@@ -260,4 +361,4 @@ def try_fetch_real_panel(ticker_symbol: str = "GC=F", interval: str = "5m", coun
     news = fetch_all_news()
     news_aligned = align_news_to_bars(ohlc.index, news)
 
-    return {"ohlc": ohlc, "news_aligned": news_aligned, "n_raw_headlines": len(news)}
+    return {"ohlc": ohlc, "news_aligned": news_aligned, "news_raw": news, "n_raw_headlines": len(news)}

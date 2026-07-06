@@ -95,7 +95,10 @@ class FinBERTSentimentScorer:
                 raise ImportError("transformers import probe failed (unavailable or binary-incompatible)")
             from transformers import pipeline  # noqa: F401  (import guarded)
 
-            self._pipeline = pipeline("sentiment-analysis", model=model_name)
+            # truncation=True: headlines occasionally exceed BERT's 512-token
+            # limit once several are concatenated per bar; without this the
+            # pipeline raises mid-batch.
+            self._pipeline = pipeline("sentiment-analysis", model=model_name, truncation=True)
             self.backend = "finbert"
         except Exception:
             # No network access to the HF hub, transformers/model weights
@@ -103,16 +106,27 @@ class FinBERTSentimentScorer:
             self._fallback = LexiconFallbackScorer()
 
     def score_batch(self, texts: List[str]) -> List[Tuple[float, float]]:
-        if self.backend == "finbert":
-            results = self._pipeline(texts)
-            out = []
-            for r in results:
+        """Score a list of texts -> [(polarity in [-1,1], confidence in [0,1])].
+
+        Two efficiency shortcuts that matter at 5,000-bar scale:
+        - empty texts (bars with no headlines) score (0.0, 0.5) directly;
+        - duplicate texts are scored ONCE and the result broadcast back.
+          Adjacent bars share the same trailing-window headline text, so a
+          5,000-bar panel typically contains only a few hundred unique
+          texts -- this turns minutes of FinBERT inference into seconds.
+        """
+        unique = [t for t in dict.fromkeys(texts) if t.strip()]
+        if self.backend == "finbert" and unique:
+            results = self._pipeline(unique, batch_size=16)
+            scored = {}
+            for t, r in zip(unique, results):
                 label = r["label"].lower()
                 score = r["score"]
                 polarity = score if label == "positive" else (-score if label == "negative" else 0.0)
-                out.append((polarity, score))
-            return out
-        return [self._fallback.score(t) for t in texts]
+                scored[t] = (polarity, score)
+        else:
+            scored = {t: self._fallback.score(t) for t in unique} if unique else {}
+        return [scored.get(t, (0.0, 0.5)) if t.strip() else (0.0, 0.5) for t in texts]
 
 
 # Column order matters: these are the LAST 4 columns of the sentiment

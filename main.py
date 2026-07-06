@@ -92,6 +92,26 @@ def run(
         price_predictions_by_model["_actual"] = actual
         price_predictions_by_model[name] = predicted
 
+    def export_predictions_csv(name, y_true, y_pred):
+        """Intermediate-results export: every test-set forecast origin with
+        its actual and predicted k-step log-returns, one CSV per model per
+        seed, for offline analysis. Non-fatal on failure."""
+        import os
+
+        try:
+            os.makedirs("exports", exist_ok=True)
+            origin_dates = [panel.dates[t] for t in test_ds.indices]
+            k = y_true.shape[1]
+            df_out = __import__("pandas").DataFrame({"origin": origin_dates})
+            for h in range(k):
+                df_out[f"actual_h{h+1}"] = y_true[:, h]
+                df_out[f"pred_h{h+1}"] = y_pred[:, h]
+            path = f"exports/predictions_test_{name}_seed{seed}.csv"
+            df_out.to_csv(path, index=False)
+            print(f"[export] {path}")
+        except Exception as e:
+            print(f"[export] predictions CSV for {name} failed (non-fatal): {e}")
+
     # --- Fit XGBoost FIRST: it is an INTERNAL component of the Hybrid
     # architecture (a fused expert, see models/hybrid_model.py), not a
     # compared baseline, so it gets no standalone entry in the report. ---
@@ -115,6 +135,7 @@ def run(
     hybrid, hist = train_model(hybrid, train_ds_xgb, val_ds_xgb, epochs=epochs, lr=TRAIN_CFG.lr * 0.5, device=device, classification_weight=classification_weight)
     reports["Hybrid_CNN_LSTM_Transformer"], y_true, y_pred, _ = evaluate_deep_model(hybrid, test_ds_xgb, "Hybrid_CNN_LSTM_Transformer", device=device)
     record_price_predictions("Hybrid_CNN_LSTM_Transformer", y_true, y_pred)
+    export_predictions_csv("Hybrid_CNN_LSTM_Transformer", y_true, y_pred)
 
     # Report how much the network actually trusts the XGBoost branch, on average
     avg_xgb_trust = _average_xgb_trust(hybrid, test_ds_xgb, device=device)
@@ -125,12 +146,14 @@ def run(
     vlstm, _ = train_model(vlstm, train_ds, val_ds, epochs=epochs, device=device, classification_weight=classification_weight)
     reports["Vanilla_LSTM"], y_true, y_pred, _ = evaluate_deep_model(vlstm, test_ds, "Vanilla_LSTM", device=device)
     record_price_predictions("Vanilla_LSTM", y_true, y_pred)
+    export_predictions_csv("Vanilla_LSTM", y_true, y_pred)
 
     print("\n=== Training Simplified TFT baseline ===")
     tft = SimplifiedTFT()
     tft, _ = train_model(tft, train_ds, val_ds, epochs=epochs, device=device, classification_weight=classification_weight)
     reports["Simplified_TFT"], y_true, y_pred, _ = evaluate_deep_model(tft, test_ds, "Simplified_TFT", device=device)
     record_price_predictions("Simplified_TFT", y_true, y_pred)
+    export_predictions_csv("Simplified_TFT", y_true, y_pred)
 
     print("\n=== Evaluating ARIMA baseline (walk-forward, subsampled origins) ===")
     arima_report = evaluate_arima(panel, test_ds, horizon=DATA_CFG.horizon, max_origins=15 if quick else 40)
@@ -147,6 +170,7 @@ def run(
         "regime_segmented": regime_segmented_metrics(rwd_true, rwd_pred, rwd_regime_labels),
     }
     record_price_predictions("Random_Walk_Drift", rwd_true, rwd_pred)
+    export_predictions_csv("Random_Walk_Drift", rwd_true, rwd_pred)
 
     print("\n=== Summary (overall test-set metrics) ===")
     for name, rep in reports.items():

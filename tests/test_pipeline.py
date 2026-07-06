@@ -10,6 +10,10 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Skip the slow, strictly rate-limited GDELT historical news fetch in tests;
+# the RSS feeds exercise the same alignment/scoring code path in seconds.
+os.environ["FX_SKIP_GDELT"] = "1"
+
 # Must precede any torch import -- see the note at the top of main.py
 # (xgboost/torch OpenMP-runtime clash on macOS/conda).
 import xgboost  # noqa: F401
@@ -393,9 +397,14 @@ def test_metrics():
     y_true = np.random.randn(50, DATA_CFG.horizon) * 0.01
     y_pred = y_true + np.random.randn(50, DATA_CFG.horizon) * 0.002
     summary = summarize(y_true, y_pred)
-    assert set(summary.keys()) == {"MAE", "RMSE", "MAPE", "R2", "DirectionalAccuracy"}
+    assert set(summary.keys()) == {
+        "MAE", "RMSE", "MAPE", "R2", "DirectionalAccuracy",
+        "DirAcc@20pctCoverage", "DirAcc@10pctCoverage",
+    }
     assert summary["MAE"] >= 0 and summary["RMSE"] >= 0
     assert 0 <= summary["DirectionalAccuracy"] <= 1
+    assert 0 <= summary["DirAcc@20pctCoverage"] <= 1
+    assert 0 <= summary["DirAcc@10pctCoverage"] <= 1
     assert summary["R2"] <= 1.0  # R2 can be arbitrarily negative for a bad fit, but never > 1
 
     ph = per_horizon_metrics(y_true, y_pred)

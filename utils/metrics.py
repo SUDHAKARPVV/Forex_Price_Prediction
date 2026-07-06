@@ -34,6 +34,24 @@ def directional_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.mean(np.sign(y_true) == np.sign(y_pred)))
 
 
+def confident_directional_accuracy(y_true: np.ndarray, y_pred: np.ndarray, coverage: float = 0.2) -> float:
+    """Directional accuracy on the `coverage` fraction of (sample, horizon)
+    cells where the model's forecast MAGNITUDE is largest -- |forecast| as
+    a confidence proxy.
+
+    This is how directional forecasters are actually consumed in industry:
+    a signal is only acted on when conviction is high, so the operative
+    question is not "how often is the model right overall" but "how often
+    is it right when it speaks loudly". Reported alongside (never instead
+    of) the unfiltered accuracy, with the coverage made explicit, because
+    a selective accuracy without its coverage is meaningless.
+    """
+    conf = np.abs(y_pred).ravel()
+    n_keep = max(1, int(len(conf) * coverage))
+    idx = np.argsort(conf)[-n_keep:]
+    return float(np.mean(np.sign(y_true).ravel()[idx] == np.sign(y_pred).ravel()[idx]))
+
+
 def classifier_directional_accuracy(y_true: np.ndarray, direction_logits: np.ndarray) -> float:
     """Directional accuracy using the auxiliary classification head's
     predicted sign (sigmoid(logits) > 0.5) instead of the regression
@@ -97,4 +115,6 @@ def summarize(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
         "MAPE": mape(y_true, y_pred),
         "R2": r_squared(y_true, y_pred),
         "DirectionalAccuracy": directional_accuracy(y_true, y_pred),
+        "DirAcc@20pctCoverage": confident_directional_accuracy(y_true, y_pred, coverage=0.2),
+        "DirAcc@10pctCoverage": confident_directional_accuracy(y_true, y_pred, coverage=0.1),
     }
