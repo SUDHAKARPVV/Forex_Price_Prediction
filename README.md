@@ -50,7 +50,54 @@ Three design decisions define this round:
    epoch on validation *directional accuracy* (val loss as tiebreak), so
    the selection criterion agrees with the headline evaluation metric.
 
-## Results — live data (Yahoo Finance XAU/USD 5-minute candles)
+## Results — 5,000-candle live benchmark (and the 0.85 question)
+
+`python run_multi_seed.py --n_days 5000`: 5,000 real XAU/USD 5-minute
+candles (Yahoo Finance), 528 real headlines (477 from GDELT's 60-day
+archive + RSS) scored by **real FinBERT**, 3,440/749/739
+train/val/test windows, 3 training seeds. Intermediate artifacts for
+every stage are in `exports/` (prices, scored headlines, per-bar
+sentiment features, per-model test predictions).
+
+| Model | DirAcc (mean ± std) | MAE |
+|---|---|---|
+| ARIMA | 0.528 | **0.0015** |
+| **Hybrid CNN-LSTM-Transformer** | **0.507 ± 0.015** | 0.0020 |
+| Simplified TFT | 0.498 ± 0.009 | 0.0040 |
+| Vanilla LSTM | 0.496 ± 0.009 | 0.0022 |
+| Random Walk with Drift | 0.490 | 0.0016 |
+
+**The honest headline: directional accuracy > 0.85 is not achievable on
+this task, by any model, without data leakage.** At 739 test windows the
+sampling noise that produced 0.55–0.63 readings on earlier ~130-window
+test sets collapses, and every architecture lands in the 0.49–0.53 band —
+exactly where the efficient-market/martingale literature puts short-horizon
+FX predictability. Published papers reporting 85–95% directional accuracy
+on financial returns almost invariably predict smoothed targets, leak
+overlapping windows across the train/test boundary, or score price-*level*
+tracking (where a random walk scores ~99% R² trivially). Any result near
+0.85 in this repo should be treated as a bug to find, not a success to
+report.
+
+**Where the Hybrid does earn something real — selective accuracy.** Using
+|forecast| as conviction and acting only on the loudest signals
+(`DirAcc@coverage`, utils/metrics.py):
+
+| Hybrid, per seed | all signals | top 20% | top 10% | top 5% |
+|---|---|---|---|---|
+| seed 9 | 0.512 | 0.522 | 0.512 | 0.493 |
+| seed 36 | 0.522 | **0.581** | **0.658** | **0.753** |
+| seed 99 | 0.486 | 0.562 | 0.556 | 0.575 |
+
+On 2 of 3 seeds, conviction-filtering lifts the Hybrid to 0.56–0.75 —
+no baseline shows this pattern (ARIMA *degrades* under the same filter,
+0.53 → 0.35–0.46). This is the industry-standard way such models are
+consumed: not "predict every bar" but "act when confident". Accuracy at
+the longest horizon (cumulative 10-step return) also runs above the
+1-step figure (≈0.53 vs ≈0.50 on the good seeds), consistent with signal
+accumulating over horizons while single-bar noise dominates h=1.
+
+## Earlier round — 1,000-candle live benchmark (superseded)
 
 `python run_multi_seed.py` (defaults: `--source real`, seeds 9/36/99,
 30 epochs). 1,000 real candles + ~50 real headlines from
