@@ -85,10 +85,10 @@ exchange timestamp. Full extract: <code>exports/fx_prices_yfinance.csv</code>.</
     <tr>
       <td>2026-07-07 00:00:00-04:00</td>
       <td>4176.40</td>
-      <td>4187.00</td>
+      <td>4192.40</td>
       <td>4127.70</td>
-      <td>4184.40</td>
-      <td>44758</td>
+      <td>4166.00</td>
+      <td>73104</td>
     </tr>
   </tbody>
 </table>
@@ -101,8 +101,8 @@ slices for gold-related coverage — 60 days deep for intraday runs, <b>~3 years
 monthly slices for daily runs</b> (the DOC archive starts in 2017; older bars carry the
 explicit 'none' signal) — and live <b>RSS feeds</b> (Investing.com commodities/forex,
 FXStreet gold) for the freshest items GDELT hasn't indexed yet. After de-duplication the
-run captured <b>799 unique headlines</b>
-(2023-11-17 → 2026-07-07).</p>
+run captured <b>1448 unique headlines</b>
+(2024-01-15 → 2026-07-07).</p>
 <p>Each headline is scored by <b>real FinBERT (ProsusAI/finbert)</b>,
 a BERT-family transformer fine-tuned on financial text. FinBERT emits a softmax over
 {positive, neutral, negative}; we convert it to a signed <b>polarity</b>
@@ -124,46 +124,46 @@ Full scored table: <code>exports/news_headlines_scored.csv</code>.</p>
   </thead>
   <tbody>
     <tr>
-      <td>2026-07-07 11:15:00</td>
-      <td>Radisson Mining Reports Highest - Ever Assay Result at OBrien : 1 , 604 g / t (</td>
-      <td>0.891</td>
-      <td>0.891</td>
+      <td>2026-07-07 13:59:12</td>
+      <td>British Pound: Capped by layered resistance against US Dollar – Scotiabank</td>
+      <td>-0.641</td>
+      <td>0.641</td>
     </tr>
     <tr>
-      <td>2026-07-07 11:15:00</td>
-      <td>Gold Prices Slip , Silver Falls Sharply Across India</td>
-      <td>-0.967</td>
-      <td>0.967</td>
+      <td>2026-07-07 14:15:14</td>
+      <td>Japanese Yen: Weak against US Dollar with limited upside – NBC</td>
+      <td>-0.955</td>
+      <td>0.955</td>
     </tr>
     <tr>
-      <td>2026-07-07 11:16:08</td>
-      <td>Euro: Upside bias held above strong support against US Dollar – UOB</td>
-      <td>0.933</td>
-      <td>0.933</td>
+      <td>2026-07-07 14:25:17</td>
+      <td>Canadian Dollar holds steady despite solid trade data, higher Oil prices</td>
+      <td>0.784</td>
+      <td>0.784</td>
     </tr>
     <tr>
-      <td>2026-07-07 11:24:36</td>
-      <td>Indian Rupee recovers strongly as oil prices remain broadly lower</td>
-      <td>0.775</td>
-      <td>0.775</td>
+      <td>2026-07-07 14:27:56</td>
+      <td>Euro: ECB cautious as euro area outlook stays fragile – BNY</td>
+      <td>-0.886</td>
+      <td>0.886</td>
     </tr>
     <tr>
-      <td>2026-07-07 11:35:30</td>
-      <td>Gold stalls recovery as Fed uncertainty keeps buyers cautious</td>
-      <td>-0.915</td>
-      <td>0.915</td>
+      <td>2026-07-07 14:42:11</td>
+      <td>Gold stalls recovery as traders eye FOMC meeting minutes</td>
+      <td>-0.848</td>
+      <td>0.848</td>
     </tr>
     <tr>
-      <td>2026-07-07 12:00:00</td>
-      <td>Banyan Gold Advances AurMac Toward a PEA with Engagement of Leading Mining Consu</td>
-      <td>0.929</td>
-      <td>0.929</td>
+      <td>2026-07-07 14:42:20</td>
+      <td>Japanese Yen: Near historic lows against US Dollar – Scotiabank</td>
+      <td>-0.951</td>
+      <td>0.951</td>
     </tr>
   </tbody>
 </table>
-<p><b>Output analysis:</b> polarity mean +0.080, std 0.634,
+<p><b>Output analysis:</b> polarity mean -0.009, std 0.644,
 range -0.98 … +0.96.
-Class balance: <b>38% positive</b>, <b>36% neutral</b>, <b>26% negative</b> —
+Class balance: <b>31% positive</b>, <b>39% neutral</b>, <b>30% negative</b> —
 a healthy two-sided distribution (a lexicon fallback typically collapses to mostly-neutral;
 the wide spread here is the FinBERT signature). The near-zero mean says the 60-day window
 carried no persistent directional news bias, so any model edge must come from
@@ -234,9 +234,9 @@ sentiment block that enters the window
     <tr>
       <td>2026-06-30 00:00:00-04:00</td>
       <td>4022.900</td>
+      <td>-0.010</td>
       <td>0.000</td>
-      <td>0.000</td>
-      <td>0.000</td>
+      <td>-0.304</td>
       <td>0.000</td>
       <td>0.000</td>
       <td>0.000</td>
@@ -245,20 +245,20 @@ sentiment block that enters the window
     <tr>
       <td>2026-07-01 00:00:00-04:00</td>
       <td>4068.300</td>
-      <td>-0.108</td>
-      <td>-0.525</td>
-      <td>4.249</td>
+      <td>-0.008</td>
+      <td>0.000</td>
+      <td>-0.304</td>
+      <td>0.000</td>
       <td>0.000</td>
       <td>0.000</td>
       <td>1.000</td>
-      <td>0.000</td>
     </tr>
     <tr>
       <td>2026-07-02 00:00:00-04:00</td>
       <td>4112.700</td>
-      <td>-0.086</td>
-      <td>0.525</td>
-      <td>-0.224</td>
+      <td>-0.006</td>
+      <td>0.000</td>
+      <td>-0.304</td>
       <td>0.000</td>
       <td>0.000</td>
       <td>0.000</td>
@@ -267,24 +267,24 @@ sentiment block that enters the window
     <tr>
       <td>2026-07-06 00:00:00-04:00</td>
       <td>4155.100</td>
-      <td>0.038</td>
-      <td>0.515</td>
-      <td>2.617</td>
+      <td>-0.005</td>
+      <td>0.000</td>
+      <td>-0.304</td>
+      <td>0.000</td>
       <td>0.000</td>
       <td>0.000</td>
       <td>1.000</td>
-      <td>0.000</td>
     </tr>
     <tr>
       <td>2026-07-07 00:00:00-04:00</td>
-      <td>4184.400</td>
-      <td>0.030</td>
-      <td>-0.515</td>
-      <td>3.281</td>
+      <td>4166.000</td>
+      <td>-0.004</td>
+      <td>0.000</td>
+      <td>-0.304</td>
+      <td>0.000</td>
       <td>0.000</td>
       <td>0.000</td>
       <td>1.000</td>
-      <td>0.000</td>
     </tr>
   </tbody>
 </table>
@@ -311,7 +311,7 @@ remains a complete forecaster (without it, the blend provably collapses into XGB
 earlier documented iteration); checkpoints are selected by <b>validation directional
 accuracy</b>; the loss adds a sign-agreement penalty (weight 0.35) to plain MSE.</p>
 
-<p><b>Seed 9</b> — test DirAcc 0.521 · first test-set forecast origins from
+<p><b>Seed 9</b> — test DirAcc 0.520 · first test-set forecast origins from
 <code>exports/predictions_test_Hybrid_CNN_LSTM_Transformer_seed9.csv</code>
 (h1 = next bar, h10 = cumulative 10 bars ahead, log-return units):</p>
 <table class="dataframe">
@@ -328,28 +328,28 @@ accuracy</b>; the loss adds a sign-agreement penalty (weight 0.35) to plain MSE.
     <tr>
       <td>2022-08-22 00:00:00-04:00</td>
       <td>+0.00735</td>
-      <td>+0.00012</td>
+      <td>+0.00006</td>
       <td>-0.01957</td>
-      <td>+0.02047</td>
+      <td>+0.02109</td>
     </tr>
     <tr>
       <td>2022-08-23 00:00:00-04:00</td>
       <td>+0.00057</td>
-      <td>+0.00073</td>
+      <td>+0.00079</td>
       <td>-0.01820</td>
-      <td>+0.00681</td>
+      <td>+0.00654</td>
     </tr>
     <tr>
       <td>2022-08-24 00:00:00-04:00</td>
       <td>+0.00565</td>
-      <td>+0.00074</td>
+      <td>+0.00085</td>
       <td>-0.02303</td>
-      <td>+0.00991</td>
+      <td>+0.00883</td>
     </tr>
   </tbody>
 </table>
 
-<p><b>Seed 36</b> — test DirAcc 0.469 · first test-set forecast origins from
+<p><b>Seed 36</b> — test DirAcc 0.474 · first test-set forecast origins from
 <code>exports/predictions_test_Hybrid_CNN_LSTM_Transformer_seed36.csv</code>
 (h1 = next bar, h10 = cumulative 10 bars ahead, log-return units):</p>
 <table class="dataframe">
@@ -366,28 +366,28 @@ accuracy</b>; the loss adds a sign-agreement penalty (weight 0.35) to plain MSE.
     <tr>
       <td>2022-08-22 00:00:00-04:00</td>
       <td>+0.00735</td>
-      <td>-0.00007</td>
+      <td>+0.00036</td>
       <td>-0.01957</td>
-      <td>+0.00540</td>
+      <td>+0.00746</td>
     </tr>
     <tr>
       <td>2022-08-23 00:00:00-04:00</td>
       <td>+0.00057</td>
-      <td>-0.00089</td>
+      <td>-0.00060</td>
       <td>-0.01820</td>
-      <td>+0.00093</td>
+      <td>+0.00121</td>
     </tr>
     <tr>
       <td>2022-08-24 00:00:00-04:00</td>
       <td>+0.00565</td>
-      <td>-0.00017</td>
+      <td>+0.00023</td>
       <td>-0.02303</td>
-      <td>-0.00011</td>
+      <td>+0.00070</td>
     </tr>
   </tbody>
 </table>
 
-<p><b>Seed 99</b> — test DirAcc 0.528 · first test-set forecast origins from
+<p><b>Seed 99</b> — test DirAcc 0.529 · first test-set forecast origins from
 <code>exports/predictions_test_Hybrid_CNN_LSTM_Transformer_seed99.csv</code>
 (h1 = next bar, h10 = cumulative 10 bars ahead, log-return units):</p>
 <table class="dataframe">
@@ -404,23 +404,23 @@ accuracy</b>; the loss adds a sign-agreement penalty (weight 0.35) to plain MSE.
     <tr>
       <td>2022-08-22 00:00:00-04:00</td>
       <td>+0.00735</td>
-      <td>+0.00770</td>
+      <td>+0.00851</td>
       <td>-0.01957</td>
-      <td>+0.02045</td>
+      <td>+0.02377</td>
     </tr>
     <tr>
       <td>2022-08-23 00:00:00-04:00</td>
       <td>+0.00057</td>
-      <td>+0.00591</td>
+      <td>+0.00629</td>
       <td>-0.01820</td>
-      <td>+0.01155</td>
+      <td>+0.01456</td>
     </tr>
     <tr>
       <td>2022-08-24 00:00:00-04:00</td>
       <td>+0.00565</td>
-      <td>+0.00567</td>
+      <td>+0.00600</td>
       <td>-0.02303</td>
-      <td>+0.01249</td>
+      <td>+0.01644</td>
     </tr>
   </tbody>
 </table>
@@ -460,13 +460,13 @@ own parts. ARIMA/GARCH are deterministic (no seed variance). The <b>seed-ensembl
     </tr>
     <tr>
       <td>Hybrid CNN-LSTM-Transformer (+GRU +XGBoost)</td>
-      <td>0.5061</td>
-      <td>0.0262</td>
-      <td>0.5210</td>
-      <td>0.4690</td>
-      <td>0.5280</td>
-      <td>0.0218</td>
-      <td>0.0301</td>
+      <td>0.5077</td>
+      <td>0.0238</td>
+      <td>0.5200</td>
+      <td>0.4740</td>
+      <td>0.5290</td>
+      <td>0.0219</td>
+      <td>0.0302</td>
     </tr>
     <tr>
       <td>Hybrid Seed-Ensemble (3 seeds avg)</td>
@@ -494,20 +494,20 @@ own parts. ARIMA/GARCH are deterministic (no seed variance). The <b>seed-ensembl
 <h2>7. Comparison graphs — which model wins where</h2>
 
 <p><b>Scenario A: predict every bar (unfiltered).</b> Hybrid
-0.506 vs ARIMA 0.486
+0.508 vs ARIMA 0.486
 and GARCH 0.576 (walk-forward, subsampled origins).
 The econometric baselines model conditional mean/variance directly and are strong on
 noisy bars; the chart shows the mean ± std over seeds against the 0.50 coin-flip line.</p>
 <img src="charts_final/diracc_mean_std.png" alt="mean diracc">
 <img src="charts_final/per_seed_diracc.png" alt="per-seed diracc">
 <p><b>Scenario B: act only on confident signals.</b> The Hybrid's mean conviction curve:
-<b>0.506 unfiltered → 0.516 @20% → 0.518 @10% → 0.527 @5% coverage</b> — accuracy rises monotonically as it speaks more selectively, evidence
+<b>0.508 unfiltered → 0.520 @20% → 0.514 @10% → 0.523 @5% coverage</b> — accuracy rises monotonically as it speaks more selectively, evidence
 that its forecast magnitude is informative conviction, not noise. The deployable,
 validation-calibrated version of this rule and its costed backtest are in Section 8.
 ARIMA/GARCH now appear on the same curve, computed from their full-resolution
 walk-forward forecasts.</p>
 <img src="charts_final/conviction_coverage.png" alt="conviction coverage">
-<p><b>Scenario C: longer horizons.</b> Per-horizon accuracy on the cumulative return (ensemble: h1 0.517 vs h10 0.515)
+<p><b>Scenario C: longer horizons.</b> Per-horizon accuracy on the cumulative return (ensemble: h1 0.521 vs h10 0.519)
 shows where in the 10-bar horizon the model earns its accuracy.</p>
 <img src="charts_final/per_horizon_diracc.png" alt="per horizon">
 <p><b>Scenario D: magnitude error (MAE).</b> The econometric baselines typically win on
@@ -536,21 +536,21 @@ last 3 bars) vs quiet origins:</p>
   <tbody>
     <tr>
       <td>Hybrid CNN-LSTM-Transformer (+GRU +XGBoost)</td>
-      <td>0.4446</td>
-      <td>0.5099</td>
-      <td>56</td>
+      <td>0.4964</td>
+      <td>0.5087</td>
+      <td>75</td>
     </tr>
     <tr>
       <td>ARIMA</td>
-      <td>0.5518</td>
-      <td>0.4817</td>
-      <td>56</td>
+      <td>0.5293</td>
+      <td>0.4821</td>
+      <td>75</td>
     </tr>
     <tr>
       <td>GARCH (AR(1)-GARCH(1,1))</td>
-      <td>0.5946</td>
-      <td>0.5751</td>
-      <td>56</td>
+      <td>0.6013</td>
+      <td>0.5741</td>
+      <td>75</td>
     </tr>
   </tbody>
 </table>
@@ -579,29 +579,29 @@ regime the validation data selected:</p>
     <tr>
       <td>9</td>
       <td>follow</td>
-      <td>0.7000</td>
-      <td>0.5504</td>
-      <td>0.3620</td>
-      <td>0.5513</td>
-      <td>0.5210</td>
+      <td>0.9500</td>
+      <td>0.6667</td>
+      <td>0.0900</td>
+      <td>0.5538</td>
+      <td>0.5199</td>
     </tr>
     <tr>
       <td>36</td>
       <td>fade</td>
       <td>0.9500</td>
-      <td>0.5700</td>
-      <td>0.0860</td>
-      <td>0.5085</td>
-      <td>0.4692</td>
+      <td>0.5638</td>
+      <td>0.0710</td>
+      <td>0.4985</td>
+      <td>0.4744</td>
     </tr>
     <tr>
       <td>99</td>
       <td>follow</td>
       <td>0.9500</td>
-      <td>0.5576</td>
-      <td>0.0960</td>
-      <td>0.5136</td>
-      <td>0.5281</td>
+      <td>0.5761</td>
+      <td>0.1020</td>
+      <td>0.5128</td>
+      <td>0.5289</td>
     </tr>
   </tbody>
 </table>
@@ -626,32 +626,32 @@ change, stay flat otherwise. Accuracy is a proxy; this is the decision-grade met
   <tbody>
     <tr>
       <td>9</td>
-      <td>126.29</td>
+      <td>19.27</td>
       <td>141.17</td>
-      <td>1.37</td>
+      <td>0.42</td>
       <td>1.17</td>
-      <td>41%</td>
-      <td>326</td>
-      <td>-0.14</td>
+      <td>10%</td>
+      <td>32</td>
+      <td>-0.15</td>
     </tr>
     <tr>
       <td>36</td>
-      <td>-19.06</td>
+      <td>-17.29</td>
       <td>141.17</td>
-      <td>-0.47</td>
+      <td>-0.43</td>
       <td>1.17</td>
-      <td>13%</td>
-      <td>52</td>
-      <td>-0.33</td>
+      <td>12%</td>
+      <td>44</td>
+      <td>-0.30</td>
     </tr>
     <tr>
       <td>99</td>
-      <td>37.14</td>
+      <td>30.43</td>
       <td>141.17</td>
-      <td>0.71</td>
+      <td>0.59</td>
       <td>1.17</td>
       <td>17%</td>
-      <td>72</td>
+      <td>68</td>
       <td>-0.14</td>
     </tr>
   </tbody>
@@ -668,8 +668,8 @@ removal; it flags candidates for an ablation.</p>
 
 <h3>Final verdict</h3>
 <div class="callout"><b>Where this run landed:</b> Hybrid unfiltered DirAcc
-<b>0.506 ± 0.026</b> vs best baseline
-GARCH (AR(1)-GARCH(1,1)) at 0.576. The seed-ensemble reaches DirAcc <b>0.504</b> (selective: 0.534 @20%, 0.537 @10%). The event-window,
+<b>0.508 ± 0.024</b> vs best baseline
+GARCH (AR(1)-GARCH(1,1)) at 0.576. The seed-ensemble reaches DirAcc <b>0.504</b> (selective: 0.531 @20%, 0.538 @10%). The event-window,
 calibrated-abstention and backtest tables above show the behaviour of the model's
 conviction machinery on this run's data. The econometric baseline wins this round's raw accuracy — and that is a publishable finding, not an embarrassment: GARCH (AR(1)-GARCH(1,1)) models exactly the conditional mean/variance structure that dominates a strongly trending, volatility-clustered window, while the Hybrid's advantages are concentrated in its conviction machinery (selective accuracy, abstention, event analysis) and its multi-modal interpretability rather than the unfiltered average. All models are scored on identical, full-resolution test origins.</div>
 <div class="callout"><b>On the 0.85 directional-accuracy target — unchanged verdict:</b>
@@ -699,7 +699,7 @@ recency; adding FOMC meeting dates and NFP releases would sharpen the event anal
 <p>This project built and honestly evaluated a complete multi-modal FX forecasting
 system: <b>6,485 live daily XAU/USD candles</b> from yfinance
 (daily runs use the full listed history), a real news pipeline (GDELT archive + RSS,
-<b>799</b> headlines) scored by real FinBERT, <b>REAL macro (Yahoo rates/DXY + BLS CPI)</b>, 26 engineered
+<b>1448</b> headlines) scored by real FinBERT, <b>REAL macro (Yahoo rates/DXY + BLS CPI)</b>, 26 engineered
 features across technical / macro / sentiment streams, and a Hybrid
 CNN-LSTM-Transformer whose final forecast is a learned per-horizon convex blend between
 a deep pathway (conditioned on volatility regime and current news sentiment) and an
