@@ -183,7 +183,7 @@ def build_fx_panel(
     source: str = "synthetic",
     signal_strength: float = 0.35,
     real_ticker: str = None,
-    real_interval: str = "1h",
+    real_interval: str = "1d",
     real_count: int = None,
 ) -> FXPanel:
     """Assemble the full multi-modal panel for one currency pair.

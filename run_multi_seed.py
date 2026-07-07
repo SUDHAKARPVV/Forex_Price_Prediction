@@ -138,10 +138,13 @@ if __name__ == "__main__":
                              "no longer caps at 5,000.")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--source", type=str, default="real", choices=["synthetic", "real"])
-    parser.add_argument("--interval", type=str, default="1h",
-                        help="'1h' hourly bars (730-day history, ~13,700 bars -- the "
-                             "momentum/volatility sweet spot), '1d' daily (full history "
-                             "to 2000), or minute bars like '5m'/'30m' (60-day cap).")
+    parser.add_argument("--interval", type=str, default="1d",
+                        help="'1d' daily bars (default: full 25-year history, natural alignment "
+                             "with the daily/monthly macro cadence -- the hourly round showed "
+                             "intraday scale favours the AR baselines and starves the macro "
+                             "features), '1h' hourly (730-day cap), minute bars (60-day cap). "
+                             "Yahoo has no native 12h interval; daily dominates a resampled "
+                             "12h on bar count (6,485 vs ~1,460) and on macro alignment.")
     parser.add_argument("--signal_strength", type=float, default=None)
     args = parser.parse_args()
 

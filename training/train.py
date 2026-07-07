@@ -18,7 +18,18 @@ from config import TRAIN_CFG
 
 
 def combined_loss(pred: torch.Tensor, target: torch.Tensor, directional_weight: float = 0.0) -> torch.Tensor:
-    """MSE plus an optional directional (sign-agreement) hinge penalty.
+    """Huber (robust) regression loss plus an optional directional
+    (sign-agreement) hinge penalty.
+
+    Huber replaces plain MSE after the hourly-scale round showed the model
+    chasing volatility spikes: with squared error, one 3-sigma bar
+    outweighs dozens of ordinary bars, so training gradients are dominated
+    by exactly the unpredictable jumps the model should NOT fit. Huber is
+    quadratic near zero and linear beyond delta -- the industry-standard
+    robust loss for financial return targets. Inputs arrive here already
+    scaled by return_scale (see total_loss), so delta=1.0 means "one
+    representative return magnitude": ordinary bars stay in the quadratic
+    regime, spikes get a bounded, linear gradient.
 
     Pure MSE can be minimised by predictions that are small and correctly
     *scaled* but wrong in *sign* -- exactly the failure mode the initial
@@ -35,11 +46,11 @@ def combined_loss(pred: torch.Tensor, target: torch.Tensor, directional_weight: 
     blow up while barely improving directional accuracy; kept as a cautionary
     note for anyone modifying this function).
     """
-    mse = nn.functional.mse_loss(pred, target)
+    reg = nn.functional.huber_loss(pred, target, delta=1.0)
     if directional_weight <= 0:
-        return mse
+        return reg
     disagreement = torch.relu(-pred * target)
-    return mse + directional_weight * disagreement.mean()
+    return reg + directional_weight * disagreement.mean()
 
 
 def directional_bce_loss(direction_logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:

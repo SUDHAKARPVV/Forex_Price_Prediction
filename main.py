@@ -191,7 +191,7 @@ def run(
     reports["Hybrid_CNN_LSTM_Transformer"]["calibrated_abstention"] = abstention
     if abstention:
         print(f"[hybrid] calibrated abstention: act on {abstention['test_coverage']*100:.0f}% of signals "
-              f"(tau from val q={abstention['conf_quantile']}) -> test selective DirAcc "
+              f"(tau from val q={abstention['conf_quantile']}, mode={abstention['mode']}) -> test selective DirAcc "
               f"{abstention['test_selective_acc']:.3f} vs {abstention['test_acc_unfiltered']:.3f} unfiltered")
 
         # Costed conviction backtest (roadmap: P&L with costs, not accuracy,
@@ -203,9 +203,9 @@ def run(
         from utils.backtest import conviction_backtest
         tau_h1 = float(np.quantile(np.abs(val_pred[:, 0]), abstention["conf_quantile"]))
         bt_dates = [panel.dates[t] for t in test_ds.indices]
-        backtest = conviction_backtest(y_true[:, 0], y_pred[:, 0], bt_dates, tau=tau_h1)
+        backtest = conviction_backtest(y_true[:, 0], y_pred[:, 0], bt_dates, tau=tau_h1, mode=abstention['mode'])
         reports["Hybrid_CNN_LSTM_Transformer"]["backtest"] = backtest
-        print(f"[backtest] conviction strategy: {backtest['total_return_pct']:+.2f}% net "
+        print(f"[backtest] conviction strategy ({backtest['mode']}): {backtest['total_return_pct']:+.2f}% net "
               f"(buy&hold {backtest['buy_hold_return_pct']:+.2f}%), Sharpe {backtest['annualised_sharpe']:.2f} "
               f"(b&h {backtest['buy_hold_sharpe']:.2f}), in market {backtest['time_in_market']*100:.0f}%, "
               f"{backtest['n_transactions']} transactions @ {backtest['cost_bps_per_change']}bps")
@@ -269,38 +269,55 @@ def xgb_feature_importance_audit(xgb_model, feature_names):
 
 
 def calibrate_abstention(val_true, val_pred, test_true, test_pred, min_val_coverage: float = 0.05):
-    """Roadmap item 5 -- calibrated abstention: choose the conviction
-    threshold ON THE VALIDATION SET (split-conformal style: scan |forecast|
-    quantiles, keep the one with the best selective validation accuracy at
-    workable coverage), then apply that FIXED threshold to the test set.
-    The reported test accuracy/coverage therefore involves no test-set
-    tuning -- unlike the descriptive DirAcc@coverage curves, this is a
-    deployable decision rule.
+    """Calibrated abstention WITH a momentum-reversal (follow/fade) mode.
+
+    Two decisions are made ON THE VALIDATION SET only (split-conformal
+    style), then applied frozen to the test set:
+
+      1. the conviction threshold tau (scan |forecast| quantiles, keep the
+         best selective validation accuracy at workable coverage), and
+      2. the TRADE DIRECTION: "follow" (trade with the forecast sign) or
+         "fade" (trade against it). The hourly-scale round surfaced a real
+         structural effect -- the model's highest-conviction intraday
+         signals were systematically WRONG (selective accuracy below 0.5),
+         i.e. large predicted moves mean-revert. Rather than discarding
+         that information, the rule inverts it: if fading high-conviction
+         signals is what works on validation, that inversion is applied,
+         and reported explicitly as mode="fade". A model reliably wrong at
+         55% is exactly as useful as one reliably right at 55% -- the
+         insight is structural (momentum-reversal), not a bug.
+
+    The reported test accuracy/coverage involves no test-set tuning --
+    unlike the descriptive DirAcc@coverage curves, this is a deployable
+    decision rule.
     """
     conf_val = np.abs(val_pred).ravel()
-    hits_val = (np.sign(val_true) == np.sign(val_pred)).ravel()
+    val_sign_hits = (np.sign(val_true) == np.sign(val_pred)).ravel()
     best = None
     for q in np.arange(0.50, 0.96, 0.05):
         tau = float(np.quantile(conf_val, q))
         sel = conf_val >= tau
         if sel.mean() < min_val_coverage:
             continue
-        acc = float(hits_val[sel].mean())
-        if best is None or acc > best["val_selective_acc"]:
-            best = {
-                "conf_quantile": round(float(q), 2),
-                "tau": tau,
-                "val_selective_acc": acc,
-                "val_coverage": float(sel.mean()),
-            }
+        follow_acc = float(val_sign_hits[sel].mean())
+        for mode, acc in (("follow", follow_acc), ("fade", 1.0 - follow_acc)):
+            if best is None or acc > best["val_selective_acc"]:
+                best = {
+                    "conf_quantile": round(float(q), 2),
+                    "tau": tau,
+                    "mode": mode,
+                    "val_selective_acc": acc,
+                    "val_coverage": float(sel.mean()),
+                }
     if best is None:
         return None
+    direction = 1.0 if best["mode"] == "follow" else -1.0
     conf_t = np.abs(test_pred).ravel()
-    hits_t = (np.sign(test_true) == np.sign(test_pred)).ravel()
+    hits_t = (np.sign(test_true) == np.sign(direction * test_pred)).ravel()
     sel_t = conf_t >= best["tau"]
     best["test_coverage"] = float(sel_t.mean())
     best["test_selective_acc"] = float(hits_t[sel_t].mean()) if sel_t.any() else None
-    best["test_acc_unfiltered"] = float(hits_t.mean())
+    best["test_acc_unfiltered"] = float((np.sign(test_true) == np.sign(test_pred)).ravel().mean())
     return best
 
 

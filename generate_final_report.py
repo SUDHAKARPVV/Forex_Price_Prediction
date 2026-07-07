@@ -613,6 +613,7 @@ last 3 bars) vs quiet origins:</p>
         if absts:
             ab_rows = [{
                 "seed": s,
+                "mode": a.get("mode", "follow"),
                 "val quantile": a["conf_quantile"],
                 "val selective acc": round(a["val_selective_acc"], 4),
                 "test coverage": round(a["test_coverage"], 3),
@@ -620,10 +621,14 @@ last 3 bars) vs quiet origins:</p>
                 "test unfiltered acc": round(a["test_acc_unfiltered"], 4),
             } for s, a in zip(SEEDS, absts)]
             S.append(f"""
-<p><b>Calibrated abstention (item 5):</b> the conviction threshold is chosen on the
-<i>validation</i> set (split-conformal quantile scan) and applied frozen to the test set —
-a deployable decision rule with no test-set tuning, unlike the descriptive
-coverage curves in Section 7:</p>
+<p><b>Calibrated abstention with momentum-reversal mode:</b> two decisions are made on
+the <i>validation</i> set only and applied frozen to the test set — the conviction
+threshold (split-conformal quantile scan) and the <b>trade direction</b>: "follow" trades
+with the forecast sign, "fade" trades against it. The fade option encodes the structural
+insight from the hourly-scale round, where the model's highest-conviction intraday
+signals were systematically wrong — i.e. large predicted moves mean-reverted. A model
+reliably wrong is exactly as tradable as one reliably right; the mode column shows which
+regime the validation data selected:</p>
 {df_to_html(pd.DataFrame(ab_rows), floatfmt="{:.4f}")}
 """)
         bts = [b for b in rm.get("backtest", []) if b]

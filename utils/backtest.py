@@ -29,11 +29,16 @@ def conviction_backtest(
     dates,
     tau: float,
     cost_bps: float = 2.0,
+    mode: str = "follow",
 ) -> dict:
-    """Simulate the abstention-gated strategy. Returns summary statistics
-    plus the equity curves (for charting)."""
+    """Simulate the abstention-gated strategy. `mode` is the
+    validation-calibrated trade direction: "follow" trades with the
+    forecast sign, "fade" trades against it (the momentum-reversal rule --
+    see main.py:calibrate_abstention). Returns summary statistics plus the
+    equity curves (for charting)."""
     dates = pd.DatetimeIndex(dates)
-    position = np.where(np.abs(y_pred_h1) >= tau, np.sign(y_pred_h1), 0.0)
+    direction = 1.0 if mode == "follow" else -1.0
+    position = np.where(np.abs(y_pred_h1) >= tau, direction * np.sign(y_pred_h1), 0.0)
     gross = position * y_true_h1
     trades = np.abs(np.diff(np.r_[0.0, position]))  # each unit change = one transaction
     costs = trades * cost_bps * 1e-4
@@ -52,6 +57,7 @@ def conviction_backtest(
 
     in_market = position != 0
     return {
+        "mode": mode,
         "tau": float(tau),
         "cost_bps_per_change": float(cost_bps),
         "n_bars": int(len(net)),
