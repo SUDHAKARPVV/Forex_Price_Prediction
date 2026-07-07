@@ -6,84 +6,84 @@
   ],
   "seed_ensemble": {
     "metrics": {
-      "MAE": 0.02080810062269426,
-      "RMSE": 0.028721856048148732,
-      "MAPE": 665.3640354826205,
-      "R2": -0.10387516613957337,
-      "DirectionalAccuracy": 0.5271309771309771,
-      "DirAcc@20pctCoverage": 0.5628898128898129,
-      "DirAcc@10pctCoverage": 0.6070686070686071
+      "MAE": 0.020786980319162776,
+      "RMSE": 0.028732842234985345,
+      "MAPE": 642.6067102415353,
+      "R2": -0.10471979805866694,
+      "DirectionalAccuracy": 0.5241164241164241,
+      "DirAcc@20pctCoverage": 0.5550935550935551,
+      "DirAcc@10pctCoverage": 0.5945945945945946
     },
     "n_test_windows": 962
   },
   "event_window": {
     "Hybrid_CNN_LSTM_Transformer": [
       {
-        "n_event_origins": 81,
-        "event_coverage": 0.0841995841995842,
-        "DirAcc_event": 0.5185185185185185,
-        "DirAcc_nonevent": 0.5279228149829739,
-        "MAE_event": 0.02123909443616867
+        "n_event_origins": 83,
+        "event_coverage": 0.08627858627858628,
+        "DirAcc_event": 0.5301204819277109,
+        "DirAcc_nonevent": 0.5243458475540387,
+        "MAE_event": 0.02100907452404499
       },
       {
-        "n_event_origins": 81,
-        "event_coverage": 0.0841995841995842,
-        "DirAcc_event": 0.5160493827160494,
-        "DirAcc_nonevent": 0.5267877412031782,
-        "MAE_event": 0.021242579445242882
+        "n_event_origins": 83,
+        "event_coverage": 0.08627858627858628,
+        "DirAcc_event": 0.5240963855421686,
+        "DirAcc_nonevent": 0.5323094425483504,
+        "MAE_event": 0.020112285390496254
       },
       {
-        "n_event_origins": 81,
-        "event_coverage": 0.0841995841995842,
-        "DirAcc_event": 0.5160493827160494,
-        "DirAcc_nonevent": 0.5267877412031782,
-        "MAE_event": 0.021242579445242882
+        "n_event_origins": 83,
+        "event_coverage": 0.08627858627858628,
+        "DirAcc_event": 0.5144578313253012,
+        "DirAcc_nonevent": 0.5226393629124004,
+        "MAE_event": 0.021063687279820442
       }
     ],
     "Vanilla_LSTM": [
       {
-        "n_event_origins": 81,
-        "event_coverage": 0.0841995841995842,
-        "DirAcc_event": 0.5333333333333333,
-        "DirAcc_nonevent": 0.513961407491487,
-        "MAE_event": 0.02431291900575161
+        "n_event_origins": 83,
+        "event_coverage": 0.08627858627858628,
+        "DirAcc_event": 0.43734939759036146,
+        "DirAcc_nonevent": 0.4920364050056883,
+        "MAE_event": 0.02657112292945385
       },
       {
-        "n_event_origins": 81,
-        "event_coverage": 0.0841995841995842,
-        "DirAcc_event": 0.5333333333333333,
-        "DirAcc_nonevent": 0.513961407491487,
-        "MAE_event": 0.02431291900575161
+        "n_event_origins": 83,
+        "event_coverage": 0.08627858627858628,
+        "DirAcc_event": 0.491566265060241,
+        "DirAcc_nonevent": 0.5084186575654153,
+        "MAE_event": 0.02130228467285633
       },
       {
-        "n_event_origins": 81,
-        "event_coverage": 0.0841995841995842,
-        "DirAcc_event": 0.5333333333333333,
-        "DirAcc_nonevent": 0.513961407491487,
-        "MAE_event": 0.02431291900575161
+        "n_event_origins": 83,
+        "event_coverage": 0.08627858627858628,
+        "DirAcc_event": 0.4819277108433735,
+        "DirAcc_nonevent": 0.540386803185438,
+        "MAE_event": 0.01974257081747055
       }
     ],
     "Simplified_TFT": [
       {
-        "n_event_origins": 81,
-        "event_coverage": 0.0841995841995842,
-        "DirAcc_event": 0.6320987654320988,
-        "DirAcc_nonevent": 0.5633371169125994,
-        "MAE_event": 0.017637837678194046
+        "n_event_origins": 83,
+        "event_coverage": 0.08627858627858628,
+        "DirAcc_event": 0.5614457831325301,
+        "DirAcc_nonevent": 0.5425483503981797,
+        "MAE_event": 0.019587473943829536
       },
       {
-        "n_event_origins": 81,
-        "event_coverage": 0.0841995841995842,
-        "DirAcc_event": 0.6320987654320988,
-        "DirAcc_nonevent": 0.5633371169125994,
-        "MAE_event": 0.017637837678194046
+        "n_event_origins": 83,
+        "event_coverage": 0.08627858627858628,
+        "DirAcc_event": 0.5602409638554217,
+        "DirAcc_nonevent": 0.5478953356086462,
+        "MAE_event": 0.0200408473610878
       },
       {
-        "n_event_origins": 81,
-        "event_coverage": 0.0841995841995842,
-        "DirAcc_event": 0.6320987654320988,
-        "DirAcc_nonevent": 0.5633371169125994,
-        "MAE_event": 0.017637837678194046
+        "n_event_origins": 83,
+        "event_coverage": 0.08627858627858628,
+        "DirAcc_event": 0.5144578313253012,
+        "DirAcc_nonevent": 0.5306029579067122,
+        "MAE_event": 0.019368821755051613
       }
     ],
     "ARIMA": [
@@ -93,55 +93,55 @@
     ],
     "Random_Walk_Drift": [
       {
-        "n_event_origins": 81,
-        "event_coverage": 0.0841995841995842,
-        "DirAcc_event": 0.6432098765432098,
-        "DirAcc_nonevent": 0.5709421112372304,
-        "MAE_event": 0.018357137218117714
+        "n_event_origins": 83,
+        "event_coverage": 0.08627858627858628,
+        "DirAcc_event": 0.5662650602409639,
+        "DirAcc_nonevent": 0.5780432309442548,
+        "MAE_event": 0.018889326602220535
       },
       {
-        "n_event_origins": 81,
-        "event_coverage": 0.0841995841995842,
-        "DirAcc_event": 0.6432098765432098,
-        "DirAcc_nonevent": 0.5709421112372304,
-        "MAE_event": 0.018357137218117714
+        "n_event_origins": 83,
+        "event_coverage": 0.08627858627858628,
+        "DirAcc_event": 0.5662650602409639,
+        "DirAcc_nonevent": 0.5780432309442548,
+        "MAE_event": 0.018889326602220535
       },
       {
-        "n_event_origins": 81,
-        "event_coverage": 0.0841995841995842,
-        "DirAcc_event": 0.6432098765432098,
-        "DirAcc_nonevent": 0.5709421112372304,
-        "MAE_event": 0.018357137218117714
+        "n_event_origins": 83,
+        "event_coverage": 0.08627858627858628,
+        "DirAcc_event": 0.5662650602409639,
+        "DirAcc_nonevent": 0.5780432309442548,
+        "MAE_event": 0.018889326602220535
       }
     ]
   },
   "calibrated_abstention": [
     {
-      "conf_quantile": 0.5,
-      "tau": 0.004506407771259546,
-      "val_selective_acc": 0.47962962962962963,
-      "val_coverage": 0.5,
-      "test_coverage": 0.5966735966735967,
-      "test_selective_acc": 0.547212543554007,
-      "test_acc_unfiltered": 0.5271309771309771
+      "conf_quantile": 0.85,
+      "tau": 0.016093498095870018,
+      "val_selective_acc": 0.49039780521262005,
+      "val_coverage": 0.15,
+      "test_coverage": 0.20582120582120583,
+      "test_selective_acc": 0.548989898989899,
+      "test_acc_unfiltered": 0.5248440748440748
     },
     {
-      "conf_quantile": 0.5,
-      "tau": 0.004188672639429569,
-      "val_selective_acc": 0.4806584362139918,
-      "val_coverage": 0.5,
-      "test_coverage": 0.6016632016632016,
-      "test_selective_acc": 0.5409467864547339,
-      "test_acc_unfiltered": 0.5258835758835759
+      "conf_quantile": 0.85,
+      "tau": 0.015323623083531857,
+      "val_selective_acc": 0.4794238683127572,
+      "val_coverage": 0.15,
+      "test_coverage": 0.17058212058212058,
+      "test_selective_acc": 0.5856185252894577,
+      "test_acc_unfiltered": 0.5316008316008316
     },
     {
-      "conf_quantile": 0.5,
-      "tau": 0.004188672639429569,
-      "val_selective_acc": 0.4806584362139918,
-      "val_coverage": 0.5,
-      "test_coverage": 0.6016632016632016,
-      "test_selective_acc": 0.5409467864547339,
-      "test_acc_unfiltered": 0.5258835758835759
+      "conf_quantile": 0.85,
+      "tau": 0.014916125684976578,
+      "val_selective_acc": 0.48010973936899864,
+      "val_coverage": 0.15,
+      "test_coverage": 0.18794178794178795,
+      "test_selective_acc": 0.5486725663716814,
+      "test_acc_unfiltered": 0.521933471933472
     }
   ]
 }

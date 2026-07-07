@@ -495,22 +495,31 @@ the three seeds' Hybrid forecasts before scoring.</p>
     # ---------------- 7. graphs ----------------
     S.append(f"""
 <h2>7. Comparison graphs — which model wins where</h2>
-<p><b>Scenario A: predict every bar (unfiltered).</b> All models sit in the 0.49–0.53 band;
-ARIMA leads narrowly, the Hybrid is the best learned model.</p>
+<p><b>Scenario A: predict every bar (unfiltered).</b> <b>Random Walk with Drift wins the
+raw average (0.577) by construction, not by skill</b>: the chronological test window is
+the most recent ~15% of the daily history — a period containing gold's strongest bull
+run — so a model that always predicts "up" is right exactly as often as the market rose,
+which is what RWD's positive-drift forecast amounts to. This is a property of the regime,
+and it is precisely why the dissertation's regime-aware framing matters. Among models
+that genuinely predict both directions, the TFT (0.541) and the Hybrid (0.526) lead,
+with real seed variance now shown as error bars.</p>
 <img src="{charts.get('diracc_mean_std.png','')}" alt="mean diracc">
 <img src="{charts.get('per_seed_diracc.png','')}" alt="per-seed diracc">
-<p><b>Scenario B: act only on confident signals.</b> The scenario that matters for a
-trading signal. As coverage tightens from 100% to 5%, the <b>Hybrid rises to
-0.56–0.75</b> (mean curve below) while every baseline stays flat or degrades — the deep
-model knows <i>when</i> it knows. This is the Hybrid's clearest, most defensible win.</p>
+<p><b>Scenario B: act only on confident signals.</b> As coverage tightens from 100% to
+5%, the <b>Hybrid gains the most of any learned model</b> (+0.09: 0.526 → 0.557 @20% →
+0.597 @10% → 0.612 @5%), evidence that its conviction is informative. The vanilla LSTM
+stays flat — it does not know when it knows. RWD's curve also rises, but its
+"conviction" is simply trend steepness, i.e. a bigger bet on the same always-up call;
+the deployable, validation-calibrated version of the Hybrid's rule (Section 8) reaches
+<b>0.549–0.586 at ~20% coverage on every seed</b> with no test-set tuning.</p>
 <img src="{charts.get('conviction_coverage.png','')}" alt="conviction coverage">
-<p><b>Scenario C: longer horizons.</b> Accuracy on the cumulative 10-bar return runs above
-the single-bar figure for the Hybrid — signal accumulates across horizons while
-single-bar microstructure noise dominates h=1.</p>
+<p><b>Scenario C: longer horizons.</b> Accuracy on the cumulative 10-bar (2-week) return
+runs slightly above the 1-bar figure for the Hybrid (0.524 vs 0.518 on the ensemble) —
+signal accumulates over horizons while single-bar noise dominates h=1.</p>
 <img src="{charts.get('per_horizon_diracc.png','')}" alt="per horizon">
-<p><b>Scenario D: magnitude error (MAE).</b> The mean-reverting classical models win on
-pure magnitude — expected on near-random-walk returns, and why MAE alone is a misleading
-model-selection criterion for directional trading.</p>
+<p><b>Scenario D: magnitude error (MAE).</b> ARIMA wins on pure magnitude (0.0170) —
+expected on near-random-walk returns, and why MAE alone is a misleading model-selection
+criterion for directional trading.</p>
 <img src="{charts.get('mae_comparison.png','')}" alt="mae">
 """)
 
