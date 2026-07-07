@@ -69,7 +69,7 @@ import torch.nn as nn
 from config import DATA_CFG, MODEL_CFG
 from models.feature_fusion import FeatureFusion
 from models.cnn_layer import CNNLocalFeatureExtractor
-from models.lstm_layer import BiLSTMTemporalLayer
+from models.lstm_layer import BiLSTMTemporalLayer, BiGRUTemporalLayer
 from models.transformer_block import TransformerContextBlock
 from models.regime_aware import RegimeAwareOutputLayer
 
@@ -80,11 +80,23 @@ class HybridCNNLSTMTransformer(nn.Module):
         self.fusion = FeatureFusion()
         self.cnn = CNNLocalFeatureExtractor()
         self.bilstm = BiLSTMTemporalLayer()
+        # Parallel Bi-GRU branch: same geometry as the Bi-LSTM (2 stacked
+        # bidirectional layers, 128/direction -> 256), different recurrent
+        # cell. A learned per-sample gate blends the two sequences before
+        # the Transformer, so the network chooses -- window by window --
+        # between the LSTM's longer-memory cell state and the GRU's
+        # faster-adapting two-gate dynamics.
+        self.bigru = BiGRUTemporalLayer()
+        self.temporal_gate = nn.Linear(MODEL_CFG.lstm_output * 2, 1)
+        # Neutral start: sigmoid(0) = 0.5 -- neither recurrent cell is
+        # privileged until the loss says otherwise.
+        nn.init.zeros_(self.temporal_gate.weight)
+        nn.init.zeros_(self.temporal_gate.bias)
 
-        # Bi-LSTM outputs 256-dim, which matches transformer_d_model exactly,
-        # so no extra projection layer is needed before the Transformer block.
+        # Recurrent output is 256-dim, which matches transformer_d_model
+        # exactly, so no extra projection is needed before the Transformer.
         assert MODEL_CFG.lstm_output == MODEL_CFG.transformer_d_model, (
-            "Bi-LSTM output width must match Transformer d_model (both = 256, Section 3.1.3/3.1.4)"
+            "Recurrent output width must match Transformer d_model (both = 256, Section 3.1.3/3.1.4)"
         )
         self.transformer = TransformerContextBlock()
 
@@ -236,7 +248,13 @@ class HybridCNNLSTMTransformer(nn.Module):
         # broadcast-add both conditioning vectors across all T/2 timesteps
         local = local + (regime_embed + signal_embed).unsqueeze(1)
 
-        temporal = self.bilstm(local)       # (B, T/2, 256)
+        temporal_lstm = self.bilstm(local)  # (B, T/2, 256)
+        temporal_gru = self.bigru(local)    # (B, T/2, 256)
+        # Per-sample blend between the two recurrent branches, driven by
+        # their pooled summaries (mean over time keeps the gate cheap).
+        gate_in = torch.cat([temporal_lstm.mean(dim=1), temporal_gru.mean(dim=1)], dim=-1)
+        lstm_weight = torch.sigmoid(self.temporal_gate(gate_in)).unsqueeze(1)  # (B, 1, 1)
+        temporal = lstm_weight * temporal_lstm + (1.0 - lstm_weight) * temporal_gru
         context_seq = self.transformer(temporal)  # (B, T/2, 256)
         deep_context = self.pool_context(context_seq)  # (B, 256)
 

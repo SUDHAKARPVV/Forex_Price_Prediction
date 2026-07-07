@@ -40,9 +40,21 @@ def bollinger_bands(close: pd.Series, period: int = 20, n_std: float = 2.0):
     return mid.bfill(), width.fillna(0.0)
 
 
+def stochastic_k(ohlc: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Stochastic oscillator %K: where the close sits inside the trailing
+    high-low range -- a bounded momentum/mean-reversion gauge that
+    complements RSI (RSI looks at close-to-close changes, %K at range
+    position)."""
+    low_min = ohlc["low"].rolling(period, min_periods=period).min()
+    high_max = ohlc["high"].rolling(period, min_periods=period).max()
+    k = (ohlc["close"] - low_min) / (high_max - low_min + 1e-12)
+    return k.clip(0, 1).fillna(0.5)
+
+
 def compute_technical_features(ohlc: pd.DataFrame) -> pd.DataFrame:
-    """Return an 8-column technical feature block:
-    [open, high, low, close (log-returns), RSI, MACD hist, BB width, volume z-score]
+    """Return a 12-column technical feature block:
+    [open, high, low, close (log-returns), RSI, MACD hist, BB width,
+     volume z-score, ATR%, ROC-10, Stochastic %K, EMA12/26 ratio]
 
     Uses log-returns rather than simple/arithmetic returns (pct_change) for
     the OHLC-derived columns, for consistency with the model's prediction
@@ -50,6 +62,16 @@ def compute_technical_features(ohlc: pd.DataFrame) -> pd.DataFrame:
     arithmetic returns are nearly identical at small magnitudes, but using
     the same transform on both sides keeps the input and target on a
     theoretically consistent (additive, time-summable) scale.
+
+    The last four indicators were added after the daily-scale round to
+    strengthen momentum/volatility coverage at intraday resolution:
+      ATR%      -- Average True Range normalised by price: pure volatility
+                   level, scale-free across price regimes.
+      ROC-10    -- 10-bar rate of change: direct momentum, the quantity a
+                   drift-following baseline implicitly exploits.
+      Stoch %K  -- close's position inside the 14-bar high-low range.
+      EMA ratio -- log(EMA12/EMA26): smoothed trend direction/strength,
+                   the state variable behind the MACD histogram.
     """
     close = ohlc["close"]
 
@@ -67,6 +89,13 @@ def compute_technical_features(ohlc: pd.DataFrame) -> pd.DataFrame:
     vol_z = (vol - vol.rolling(20, min_periods=1).mean()) / (vol.rolling(20, min_periods=1).std() + 1e-6)
     vol_z = vol_z.fillna(0.0)
 
+    atr_pct = (average_true_range(ohlc) / close.replace(0, np.nan)).fillna(0.0)
+    roc_10 = np.log(close / close.shift(10)).fillna(0.0)
+    stoch = stochastic_k(ohlc)
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    ema_ratio = np.log(ema12 / ema26).fillna(0.0)
+
     feats = pd.DataFrame(
         {
             "ret_open": ret_o,
@@ -77,6 +106,10 @@ def compute_technical_features(ohlc: pd.DataFrame) -> pd.DataFrame:
             "macd_hist": macd_hist,
             "bb_width": bb_width,
             "volume_z": vol_z,
+            "atr_pct": atr_pct,
+            "roc_10": roc_10,
+            "stoch_k": stoch,
+            "ema_ratio": ema_ratio,
         },
         index=ohlc.index,
     )

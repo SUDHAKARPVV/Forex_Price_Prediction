@@ -78,10 +78,17 @@ def fetch_gold_candles(ticker_symbol: str = "GC=F", interval: str = "5m", count:
         warnings.warn("yfinance is not installed (`pip install yfinance --break-system-packages`).")
         return pd.DataFrame()
 
-    # Intraday intervals are capped by Yahoo at 60 trailing days; daily
-    # (and coarser) intervals can fetch the full listed history, which for
-    # GC=F reaches back to 2000 -- thousands of bars instead of 60 days.
-    period = "60d" if interval.endswith(("m", "h")) else "max"
+    # Yahoo's history caps depend on the interval: minute bars get 60
+    # trailing days, HOURLY bars get 730 days (~13,700 bars for GC=F --
+    # the momentum/volatility sweet spot: intraday resolution with two
+    # years of recent-regime history), and daily+ gets the full listed
+    # history back to 2000.
+    if interval.endswith("m"):
+        period = "60d"
+    elif interval.endswith("h"):
+        period = "730d"
+    else:
+        period = "max"
     last_error = None
     for attempt in range(1, retries + 1):
         try:
@@ -314,7 +321,37 @@ def fetch_all_news(feed_urls=None, gdelt_days: int = 60, gdelt_window_days: int 
             "See the [real_data_feed] diagnostics above for the reason each one failed."
         )
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True).drop_duplicates(subset=["title"]).sort_values("timestamp").reset_index(drop=True)
+    merged = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["title"]).sort_values("timestamp").reset_index(drop=True)
+    return filter_relevant_news(merged)
+
+
+# Headlines must mention the asset or one of its macro drivers to be worth
+# scoring. The RSS feeds in particular leak unrelated items (single-stock
+# and biotech news was observed in the commodities feed); scoring those
+# with FinBERT injects sentiment that has nothing to do with gold.
+_RELEVANCE_PATTERN = (
+    r"gold|xau|bullion|precious metal|silver|comex"
+    r"|fed(eral reserve)?\b|fomc|rate (cut|hike|decision)|interest rate"
+    r"|inflation|cpi\b|dollar|dxy|treasur|yield|safe.?haven|central bank"
+)
+
+
+def filter_relevant_news(news: pd.DataFrame, min_title_words: int = 4) -> pd.DataFrame:
+    """Drop headlines that are (a) not relevant to gold or its macro
+    drivers, or (b) too short to carry scoreable content. Prints how many
+    were removed so the filtering is visible, and exports nothing here --
+    the kept set flows into exports/news_headlines_scored.csv as usual.
+    """
+    if news.empty:
+        return news
+    text = (news["title"].fillna("") + " " + news["summary"].fillna("")).str.lower()
+    relevant = text.str.contains(_RELEVANCE_PATTERN, regex=True)
+    long_enough = news["title"].fillna("").str.split().str.len() >= min_title_words
+    kept = news[relevant & long_enough].reset_index(drop=True)
+    dropped = len(news) - len(kept)
+    print(f"[real_data_feed] relevance filter: kept {len(kept)}/{len(news)} headlines "
+          f"({dropped} dropped as off-topic or too short).")
+    return kept
 
 
 # ---------------------------------------------------------------------------
@@ -526,4 +563,6 @@ def try_fetch_real_panel(ticker_symbol: str = "GC=F", interval: str = "5m", coun
         "news_raw": news,
         "n_raw_headlines": len(news),
         "macro": macro,
+        "ticker": ticker_symbol,
+        "interval": interval,
     }

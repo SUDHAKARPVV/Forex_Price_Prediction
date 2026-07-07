@@ -10,8 +10,14 @@ machine-readable JSON report and a human-readable HTML/PNG report
 Models compared (dissertation Section 1.3):
     - Hybrid CNN-LSTM-Transformer -- the proposed model, with XGBoost fused
       INSIDE the architecture as an internal expert (models/hybrid_model.py)
-    - Vanilla LSTM, Simplified TFT
-    - ARIMA, Random Walk with Drift      (classical benchmarks; RWD per Paper 1 Sec III.D)
+    - ARIMA                (Box-Jenkins conditional-mean benchmark)
+    - GARCH                (AR(1)-GARCH(1,1) conditional-mean/variance benchmark,
+                            Bollerslev 1986 -- the canonical volatile-series model)
+
+    Per the dissertation objective, the comparison is now exactly
+    "classical econometric baselines vs the proposed hybrid": the earlier
+    Vanilla LSTM / Simplified TFT / Random-Walk rows were removed. Their
+    implementations remain under baselines/ for ablations.
 
 Note: XGBoost does not appear as a standalone baseline -- it is an
 integrated component of the Hybrid model (fit first, then its prediction
@@ -43,12 +49,10 @@ import torch
 from config import DATA_CFG, TRAIN_CFG
 from data.dataset import build_fx_panel, time_split
 from models.hybrid_model import HybridCNNLSTMTransformer
-from baselines.vanilla_lstm import VanillaLSTM
-from baselines.tft_baseline import SimplifiedTFT
 from baselines.xgboost_baseline import XGBoostForexModel, XGBAugmentedDataset
-from baselines.random_walk_baseline import evaluate_random_walk, adf_test
+from baselines.random_walk_baseline import adf_test
 from training.train import train_model
-from training.evaluate import evaluate_deep_model, evaluate_arima
+from training.evaluate import evaluate_deep_model, evaluate_arima, evaluate_garch
 from utils.metrics import summarize, per_horizon_metrics, regime_segmented_metrics
 from utils.regime_detector import label_regimes
 from utils.report import generate_report
@@ -130,6 +134,11 @@ def run(
             mask |= panel.features[origins, names.index("headline_count_z")] > 0.5
         if "days_since_cpi" in names:
             mask |= panel.features[origins, names.index("days_since_cpi")] < (3 / 60)
+        # NFP release days: US non-farm payrolls come out on the first
+        # Friday of each month -- an exact calendar rule, no data needed.
+        import pandas as _pd
+        origin_dates = _pd.DatetimeIndex([panel.dates[t] for t in origins])
+        mask |= ((origin_dates.dayofweek == 4) & (origin_dates.day <= 7))
         if not mask.any():
             return None
         ev = summarize(y_true[mask], y_pred[mask])
@@ -148,6 +157,11 @@ def run(
     print("\n=== Fitting XGBoost expert (fused inside the Hybrid architecture) ===")
     xgb = XGBoostForexModel()
     xgb.fit(train_ds, val_ds)
+    importance_audit = xgb_feature_importance_audit(xgb, panel.feature_names)
+    print("[features] XGBoost importance audit -- top:",
+          ", ".join(f"{n}={v:.3f}" for n, v in importance_audit["top"][:6]))
+    print("[features] lowest-importance (noise candidates):",
+          ", ".join(f"{n}={v:.3f}" for n, v in importance_audit["bottom"]))
 
     # Wrap datasets so every sample also carries XGBoost's (precomputed,
     # frozen) prediction, for the Hybrid model to fuse internally.
@@ -180,45 +194,36 @@ def run(
               f"(tau from val q={abstention['conf_quantile']}) -> test selective DirAcc "
               f"{abstention['test_selective_acc']:.3f} vs {abstention['test_acc_unfiltered']:.3f} unfiltered")
 
+        # Costed conviction backtest (roadmap: P&L with costs, not accuracy,
+        # is the decision-grade metric). The strategy trades on the
+        # 1-step-ahead forecast, whose magnitudes are much smaller than the
+        # cumulative long-horizon ones, so the conviction threshold is
+        # re-derived at the SAME validation quantile but on the h1 column
+        # only -- still validation-calibrated, no test tuning.
+        from utils.backtest import conviction_backtest
+        tau_h1 = float(np.quantile(np.abs(val_pred[:, 0]), abstention["conf_quantile"]))
+        bt_dates = [panel.dates[t] for t in test_ds.indices]
+        backtest = conviction_backtest(y_true[:, 0], y_pred[:, 0], bt_dates, tau=tau_h1)
+        reports["Hybrid_CNN_LSTM_Transformer"]["backtest"] = backtest
+        print(f"[backtest] conviction strategy: {backtest['total_return_pct']:+.2f}% net "
+              f"(buy&hold {backtest['buy_hold_return_pct']:+.2f}%), Sharpe {backtest['annualised_sharpe']:.2f} "
+              f"(b&h {backtest['buy_hold_sharpe']:.2f}), in market {backtest['time_in_market']*100:.0f}%, "
+              f"{backtest['n_transactions']} transactions @ {backtest['cost_bps_per_change']}bps")
+    reports["Hybrid_CNN_LSTM_Transformer"]["xgb_feature_importance"] = importance_audit
+
     # Report how much the network actually trusts the XGBoost branch, on average
     avg_xgb_trust = _average_xgb_trust(hybrid, test_ds_xgb, device=device)
     print(f"[hybrid] learned average XGBoost trust weight on test set: {avg_xgb_trust:.3f} (0=ignored, 1=fully trusted)")
-
-    print("\n=== Training Vanilla LSTM baseline ===")
-    torch.manual_seed(seed + 1)
-    vlstm = VanillaLSTM()
-    vlstm, _ = train_model(vlstm, train_ds, val_ds, epochs=epochs, device=device, classification_weight=classification_weight, seed=seed)
-    reports["Vanilla_LSTM"], y_true, y_pred, _ = evaluate_deep_model(vlstm, test_ds, "Vanilla_LSTM", device=device)
-    record_price_predictions("Vanilla_LSTM", y_true, y_pred)
-    export_predictions_csv("Vanilla_LSTM", y_true, y_pred)
-    reports["Vanilla_LSTM"]["event_window"] = event_window_metrics(y_true, y_pred)
-
-    print("\n=== Training Simplified TFT baseline ===")
-    torch.manual_seed(seed + 2)
-    tft = SimplifiedTFT()
-    tft, _ = train_model(tft, train_ds, val_ds, epochs=epochs, device=device, classification_weight=classification_weight, seed=seed)
-    reports["Simplified_TFT"], y_true, y_pred, _ = evaluate_deep_model(tft, test_ds, "Simplified_TFT", device=device)
-    record_price_predictions("Simplified_TFT", y_true, y_pred)
-    export_predictions_csv("Simplified_TFT", y_true, y_pred)
-    reports["Simplified_TFT"]["event_window"] = event_window_metrics(y_true, y_pred)
 
     print("\n=== Evaluating ARIMA baseline (walk-forward, subsampled origins) ===")
     arima_report = evaluate_arima(panel, test_ds, horizon=DATA_CFG.horizon, max_origins=15 if quick else 40)
     if arima_report:
         reports["ARIMA"] = arima_report
 
-    print("\n=== Evaluating Random Walk with Drift baseline (Paper 1 Sec III.D) ===")
-    rwd_true, rwd_pred = evaluate_random_walk(panel, test_ds, horizon=DATA_CFG.horizon)
-    rwd_regime_labels = label_regimes(panel.realized_vol[np.array(test_ds.indices)])
-    reports["Random_Walk_Drift"] = {
-        "model": "Random_Walk_Drift",
-        "overall": summarize(rwd_true, rwd_pred),
-        "per_horizon": per_horizon_metrics(rwd_true, rwd_pred),
-        "regime_segmented": regime_segmented_metrics(rwd_true, rwd_pred, rwd_regime_labels),
-    }
-    record_price_predictions("Random_Walk_Drift", rwd_true, rwd_pred)
-    export_predictions_csv("Random_Walk_Drift", rwd_true, rwd_pred)
-    reports["Random_Walk_Drift"]["event_window"] = event_window_metrics(rwd_true, rwd_pred)
+    print("\n=== Evaluating GARCH baseline (AR(1)-GARCH(1,1), walk-forward) ===")
+    garch_report = evaluate_garch(panel, test_ds, horizon=DATA_CFG.horizon, max_origins=15 if quick else 40)
+    if garch_report:
+        reports["GARCH"] = garch_report
 
     print("\n=== Summary (overall test-set metrics) ===")
     for name, rep in reports.items():
@@ -244,6 +249,23 @@ def run(
     print(f"Human-readable report written to {html_path}  (charts also saved under {report_dir}/charts/)")
 
     return reports
+
+
+def xgb_feature_importance_audit(xgb_model, feature_names):
+    """Aggregate the fitted XGBoost expert's feature importances back onto
+    the panel's named features (the tabular matrix holds mean/std/last per
+    feature plus the 2 regime columns), giving an evidence-based noise
+    audit: features whose importance is ~0 across all three summaries are
+    candidates for removal in the next round."""
+    imps = np.mean([est.feature_importances_ for est in xgb_model.model.estimators_], axis=0)
+    n_feat = len(feature_names)
+    per_feature = imps[:n_feat] + imps[n_feat:2 * n_feat] + imps[2 * n_feat:3 * n_feat]
+    order = np.argsort(per_feature)[::-1]
+    return {
+        "top": [(feature_names[i], float(per_feature[i])) for i in order[:10]],
+        "bottom": [(feature_names[i], float(per_feature[i])) for i in order[-5:]],
+        "regime_ctx_importance": float(imps[3 * n_feat:].sum()),
+    }
 
 
 def calibrate_abstention(val_true, val_pred, test_true, test_pred, min_val_coverage: float = 0.05):

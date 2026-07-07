@@ -120,6 +120,26 @@ def _export_intermediates(real: dict, exports_dir: str = "exports") -> None:
 
         if real.get("macro") is not None:
             real["macro"].to_csv(os.path.join(exports_dir, "macro_fred.csv"))
+
+        # Roadmap item 4 -- grow the archive: every fetch is appended to a
+        # persistent per-ticker/per-interval price archive (deduplicated on
+        # timestamp), so history accumulates across runs instead of each
+        # run only ever seeing Yahoo's trailing window.
+        ticker = real.get("ticker", "GC=F").replace("=", "").replace("^", "").replace("-", "").replace(".", "")
+        interval = real.get("interval", "na")
+        arch_dir = os.path.join(exports_dir, "archive")
+        os.makedirs(arch_dir, exist_ok=True)
+        arch_path = os.path.join(arch_dir, f"{ticker}_{interval}_prices.csv")
+        new_prices = real["ohlc"]
+        if os.path.exists(arch_path):
+            old = pd.read_csv(arch_path, index_col=0, parse_dates=True)
+            merged = pd.concat([old, new_prices])
+            merged = merged[~merged.index.duplicated(keep="last")].sort_index()
+        else:
+            merged = new_prices
+        merged.to_csv(arch_path)
+        print(f"[data] Archive grown: {arch_path} now holds {len(merged):,} bars.")
+
         print(f"[data] Intermediate CSVs written to {exports_dir}/ "
               f"(fx_prices_yfinance.csv, news_headlines_scored.csv"
               f"{', macro_fred.csv' if real.get('macro') is not None else ''})")
@@ -146,14 +166,24 @@ def export_sentiment_features(panel: FXPanel, exports_dir: str = "exports") -> N
         warnings.warn(f"Sentiment feature CSV export failed (non-fatal): {type(e).__name__}: {e}")
 
 
+# Roadmap "grow the archive / add pairs": pair names map to Yahoo tickers,
+# so XAG/USD and EUR/USD panels (and their persistent archives under
+# exports/archive/) build through the same pipeline as gold.
+PAIR_TICKERS = {
+    "XAU/USD": "GC=F",       # COMEX gold futures
+    "XAG/USD": "SI=F",       # COMEX silver futures
+    "EUR/USD": "EURUSD=X",   # spot euro-dollar (note: Yahoo reports no volume)
+}
+
+
 def build_fx_panel(
     pair: str = "XAU/USD",
     n_days: int = 1500,
     seed: int = 42,
     source: str = "synthetic",
     signal_strength: float = 0.35,
-    real_ticker: str = "GC=F",
-    real_interval: str = "5m",
+    real_ticker: str = None,
+    real_interval: str = "1h",
     real_count: int = None,
 ) -> FXPanel:
     """Assemble the full multi-modal panel for one currency pair.
@@ -165,6 +195,7 @@ def build_fx_panel(
     defaults to `n_days`, so `--n_days 5000` requests 5,000 live candles.
     """
     if source == "real":
+        real_ticker = real_ticker or PAIR_TICKERS.get(pair, "GC=F")
         real_count = real_count or n_days
         cache_key = (real_ticker, real_interval, real_count)
         if cache_key in _REAL_FETCH_CACHE:

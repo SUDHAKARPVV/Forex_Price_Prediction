@@ -115,6 +115,12 @@ def multi_seed_evaluation(seeds, **run_kwargs):
     roadmap["calibrated_abstention"] = [
         run[hybrid_key].get("calibrated_abstention") for run in all_runs if hybrid_key in run
     ]
+    roadmap["backtest"] = [
+        run[hybrid_key].get("backtest") for run in all_runs if hybrid_key in run
+    ]
+    roadmap["feature_importance"] = (
+        all_runs[0][hybrid_key].get("xgb_feature_importance") if hybrid_key in all_runs[0] else None
+    )
 
     with open("roadmap_summary.json", "w") as f:
         json.dump(roadmap, f, indent=2, default=float)
@@ -132,9 +138,10 @@ if __name__ == "__main__":
                              "no longer caps at 5,000.")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--source", type=str, default="real", choices=["synthetic", "real"])
-    parser.add_argument("--interval", type=str, default="1d",
-                        help="'1d' daily bars (full history + 2-week horizon, per the improvement "
-                             "roadmap) or intraday like '5m' (Yahoo caps at 60 trailing days).")
+    parser.add_argument("--interval", type=str, default="1h",
+                        help="'1h' hourly bars (730-day history, ~13,700 bars -- the "
+                             "momentum/volatility sweet spot), '1d' daily (full history "
+                             "to 2000), or minute bars like '5m'/'30m' (60-day cap).")
     parser.add_argument("--signal_strength", type=float, default=None)
     args = parser.parse_args()
 

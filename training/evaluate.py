@@ -113,3 +113,33 @@ def evaluate_arima(panel, test_ds, horizon: int, max_origins: int = 40, order=(2
         "n_origins_evaluated": len(valid_origins),
     }
     return report
+
+
+def evaluate_garch(panel, test_ds, horizon: int, max_origins: int = 40):
+    """AR(1)-GARCH(1,1) walk-forward evaluation at subsampled test origins,
+    mirroring evaluate_arima's contract (see baselines/garch_baseline.py)."""
+    from baselines.garch_baseline import rolling_garch_evaluation
+
+    close = panel.close
+    origins = test_ds.indices
+    if len(origins) > max_origins:
+        step = max(1, len(origins) // max_origins)
+        origins = origins[::step][:max_origins]
+
+    preds, valid_origins = rolling_garch_evaluation(close, origins, horizon)
+    if len(valid_origins) == 0:
+        return None
+
+    log_close = np.log(close)
+    y_true = np.array([
+        (log_close[t + 1 : t + 1 + horizon] - log_close[t]) for t in valid_origins
+    ])
+    regime_labels = label_regimes(panel.realized_vol[valid_origins])
+
+    return {
+        "model": "GARCH",
+        "overall": summarize(y_true, preds),
+        "per_horizon": per_horizon_metrics(y_true, preds),
+        "regime_segmented": regime_segmented_metrics(y_true, preds, regime_labels),
+        "n_origins_evaluated": len(valid_origins),
+    }
