@@ -117,8 +117,12 @@ def _export_intermediates(real: dict, exports_dir: str = "exports") -> None:
             out["confidence"] = [c for _, c in scored]
             out["scorer_backend"] = scorer.backend
             out.to_csv(os.path.join(exports_dir, "news_headlines_scored.csv"), index=False)
+
+        if real.get("macro") is not None:
+            real["macro"].to_csv(os.path.join(exports_dir, "macro_fred.csv"))
         print(f"[data] Intermediate CSVs written to {exports_dir}/ "
-              f"(fx_prices_yfinance.csv, news_headlines_scored.csv)")
+              f"(fx_prices_yfinance.csv, news_headlines_scored.csv"
+              f"{', macro_fred.csv' if real.get('macro') is not None else ''})")
     except Exception as e:
         warnings.warn(f"Intermediate CSV export failed (non-fatal): {type(e).__name__}: {e}")
 
@@ -173,12 +177,17 @@ def build_fx_panel(
                 _export_intermediates(real)
         if real is not None:
             ohlc = real["ohlc"]
-            # No live macro feed was supplied alongside fxratefeed/fxnewsfeed,
-            # so macro stays synthetic, aligned to the real price index.
-            macro = _synthetic_macro_stream(ohlc.index, seed=seed + 1)
+            if real.get("macro") is not None:
+                # Real macroeconomic stream from FRED (rates, 10y yield,
+                # dollar index, CPI) -- roadmap item 3.
+                macro = real["macro"]
+                macro_src = "real (Yahoo rates/DXY + BLS CPI)"
+            else:
+                macro = _synthetic_macro_stream(ohlc.index, seed=seed + 1)
+                macro_src = "synthetic (FRED unreachable)"
             news = real["news_aligned"]
             print(f"[data] Using LIVE data: {len(ohlc)} candles from Yahoo Finance, "
-                  f"{real['n_raw_headlines']} raw headlines (GDELT + RSS).")
+                  f"{real['n_raw_headlines']} raw headlines (GDELT + RSS), macro: {macro_src}.")
             panel = _assemble_panel(ohlc, macro, news, source="real")
             export_sentiment_features(panel)
             return panel

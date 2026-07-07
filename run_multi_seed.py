@@ -25,6 +25,41 @@ import numpy as np
 from main import run as run_pipeline
 
 
+def build_seed_ensemble(seeds, model="Hybrid_CNN_LSTM_Transformer"):
+    """Roadmap item 6 -- seed ensembling: average the per-seed test
+    forecasts of the Hybrid (the market data is identical across seeds --
+    only training RNG differs -- so the actuals must match exactly; if
+    they don't, the export files came from different fetches and the
+    ensemble is skipped). Returns (metrics_dict, n_windows) or None.
+    """
+    import os
+
+    import pandas as pd
+
+    from utils.metrics import summarize
+
+    frames = []
+    for s in seeds:
+        path = f"exports/predictions_test_{model}_seed{s}.csv"
+        if not os.path.exists(path):
+            return None
+        frames.append(pd.read_csv(path))
+    act_cols = [f"actual_h{h}" for h in range(1, 11)]
+    pred_cols = [f"pred_h{h}" for h in range(1, 11)]
+    base = frames[0][act_cols].values
+    for f in frames[1:]:
+        if f.shape != frames[0].shape or not np.allclose(f[act_cols].values, base):
+            print("[ensemble] per-seed actuals differ (stale export files?) -- skipping seed ensemble")
+            return None
+    mean_pred = np.mean([f[pred_cols].values for f in frames], axis=0)
+    out = frames[0][["origin"]].copy()
+    for h in range(10):
+        out[f"actual_h{h+1}"] = base[:, h]
+        out[f"pred_h{h+1}"] = mean_pred[:, h]
+    out.to_csv(f"exports/predictions_test_{model}_seed_ensemble.csv", index=False)
+    return summarize(base, mean_pred), len(base)
+
+
 def multi_seed_evaluation(seeds, **run_kwargs):
     all_runs = []
     for seed in seeds:
@@ -59,6 +94,31 @@ def multi_seed_evaluation(seeds, **run_kwargs):
     with open("multi_seed_summary.json", "w") as f:
         json.dump(summary, f, indent=2, default=float)
     print("\nFull multi-seed summary written to multi_seed_summary.json")
+
+    # --- Roadmap extras: seed ensemble + event-window + calibrated abstention ---
+    roadmap = {"seeds": list(seeds)}
+
+    ens = build_seed_ensemble(seeds)
+    if ens:
+        ens_metrics, n_windows = ens
+        roadmap["seed_ensemble"] = {"metrics": ens_metrics, "n_test_windows": n_windows}
+        print(f"[ensemble] Hybrid seed-ensemble ({len(seeds)} seeds averaged): "
+              f"DirAcc={ens_metrics['DirectionalAccuracy']:.4f}  "
+              f"@20%={ens_metrics['DirAcc@20pctCoverage']:.4f}  "
+              f"@10%={ens_metrics['DirAcc@10pctCoverage']:.4f}  MAE={ens_metrics['MAE']:.5f}")
+
+    hybrid_key = "Hybrid_CNN_LSTM_Transformer"
+    roadmap["event_window"] = {
+        model: [run[model].get("event_window") for run in all_runs if model in run]
+        for model in model_names
+    }
+    roadmap["calibrated_abstention"] = [
+        run[hybrid_key].get("calibrated_abstention") for run in all_runs if hybrid_key in run
+    ]
+
+    with open("roadmap_summary.json", "w") as f:
+        json.dump(roadmap, f, indent=2, default=float)
+    print("Roadmap extras (ensemble / event-window / abstention) written to roadmap_summary.json")
     return summary
 
 
@@ -66,9 +126,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", type=int, nargs="+", default=[9, 36, 99])
     parser.add_argument("--pair", type=str, default="XAU/USD")
-    parser.add_argument("--n_days", type=int, default=5000)
+    parser.add_argument("--n_days", type=int, default=10000,
+                        help="Max bars to keep from the live fetch. Daily interval fetches the "
+                             "FULL listed history (GC=F reaches back to 2000), so the default "
+                             "no longer caps at 5,000.")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--source", type=str, default="real", choices=["synthetic", "real"])
+    parser.add_argument("--interval", type=str, default="1d",
+                        help="'1d' daily bars (full history + 2-week horizon, per the improvement "
+                             "roadmap) or intraday like '5m' (Yahoo caps at 60 trailing days).")
     parser.add_argument("--signal_strength", type=float, default=None)
     args = parser.parse_args()
 
@@ -78,5 +144,6 @@ if __name__ == "__main__":
         n_days=args.n_days,
         epochs=args.epochs,
         source=args.source,
+        interval=args.interval,
         signal_strength=args.signal_strength,
     )

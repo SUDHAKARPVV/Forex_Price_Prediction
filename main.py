@@ -65,6 +65,7 @@ def run(
     signal_strength: float = None,
     report_dir: str = "report",
     classification_weight: float = None,
+    interval: str = "1d",
 ):
     epochs = epochs or TRAIN_CFG.epochs
     signal_strength = DATA_CFG.synthetic_signal_strength if signal_strength is None else signal_strength
@@ -72,8 +73,9 @@ def run(
     if quick:
         n_days, epochs = 400, 2
 
-    print(f"\n=== Building multi-modal panel for {pair} (source={source}, n_days={n_days}) ===")
-    panel = build_fx_panel(pair=pair, n_days=n_days, seed=seed, source=source, signal_strength=signal_strength)
+    print(f"\n=== Building multi-modal panel for {pair} (source={source}, n_days={n_days}, interval={interval}) ===")
+    panel = build_fx_panel(pair=pair, n_days=n_days, seed=seed, source=source,
+                           signal_strength=signal_strength, real_interval=interval)
     print(f"[data] panel source actually used: {panel.source}  (signal_strength={signal_strength if panel.source=='synthetic' else 'n/a'})")
     train_ds, val_ds, test_ds = time_split(panel)
     print(f"train={len(train_ds)}  val={len(val_ds)}  test={len(test_ds)}  features={panel.features.shape[1]}")
@@ -112,6 +114,34 @@ def run(
         except Exception as e:
             print(f"[export] predictions CSV for {name} failed (non-fatal): {e}")
 
+    def event_window_metrics(y_true, y_pred):
+        """Roadmap item 2 -- event-window evaluation: score forecasts made
+        at origins where the information streams were ACTIVE, i.e. a news
+        burst (raw headline_count_z > 0.5 at the origin) or a CPI release
+        within the last 3 trading bars (days_since_cpi < 3/60, real FRED
+        macro only). Uses the RAW (un-normalised) panel features, so the
+        thresholds are in interpretable units. Returns None if no event
+        columns are available or no events fall in the test window.
+        """
+        names = panel.feature_names
+        origins = np.array(test_ds.indices)
+        mask = np.zeros(len(origins), dtype=bool)
+        if "headline_count_z" in names:
+            mask |= panel.features[origins, names.index("headline_count_z")] > 0.5
+        if "days_since_cpi" in names:
+            mask |= panel.features[origins, names.index("days_since_cpi")] < (3 / 60)
+        if not mask.any():
+            return None
+        ev = summarize(y_true[mask], y_pred[mask])
+        non = summarize(y_true[~mask], y_pred[~mask]) if (~mask).any() else {}
+        return {
+            "n_event_origins": int(mask.sum()),
+            "event_coverage": float(mask.mean()),
+            "DirAcc_event": ev["DirectionalAccuracy"],
+            "DirAcc_nonevent": non.get("DirectionalAccuracy"),
+            "MAE_event": ev["MAE"],
+        }
+
     # --- Fit XGBoost FIRST: it is an INTERNAL component of the Hybrid
     # architecture (a fused expert, see models/hybrid_model.py), not a
     # compared baseline, so it gets no standalone entry in the report. ---
@@ -136,6 +166,18 @@ def run(
     reports["Hybrid_CNN_LSTM_Transformer"], y_true, y_pred, _ = evaluate_deep_model(hybrid, test_ds_xgb, "Hybrid_CNN_LSTM_Transformer", device=device)
     record_price_predictions("Hybrid_CNN_LSTM_Transformer", y_true, y_pred)
     export_predictions_csv("Hybrid_CNN_LSTM_Transformer", y_true, y_pred)
+    reports["Hybrid_CNN_LSTM_Transformer"]["event_window"] = event_window_metrics(y_true, y_pred)
+
+    # Calibrated abstention (roadmap item 5): threshold picked on VALIDATION
+    # predictions only, then applied frozen to the test set.
+    from training.evaluate import collect_predictions
+    val_true, val_pred, _, _ = collect_predictions(hybrid, val_ds_xgb, device=device)
+    abstention = calibrate_abstention(val_true, val_pred, y_true, y_pred)
+    reports["Hybrid_CNN_LSTM_Transformer"]["calibrated_abstention"] = abstention
+    if abstention:
+        print(f"[hybrid] calibrated abstention: act on {abstention['test_coverage']*100:.0f}% of signals "
+              f"(tau from val q={abstention['conf_quantile']}) -> test selective DirAcc "
+              f"{abstention['test_selective_acc']:.3f} vs {abstention['test_acc_unfiltered']:.3f} unfiltered")
 
     # Report how much the network actually trusts the XGBoost branch, on average
     avg_xgb_trust = _average_xgb_trust(hybrid, test_ds_xgb, device=device)
@@ -147,6 +189,7 @@ def run(
     reports["Vanilla_LSTM"], y_true, y_pred, _ = evaluate_deep_model(vlstm, test_ds, "Vanilla_LSTM", device=device)
     record_price_predictions("Vanilla_LSTM", y_true, y_pred)
     export_predictions_csv("Vanilla_LSTM", y_true, y_pred)
+    reports["Vanilla_LSTM"]["event_window"] = event_window_metrics(y_true, y_pred)
 
     print("\n=== Training Simplified TFT baseline ===")
     tft = SimplifiedTFT()
@@ -154,6 +197,7 @@ def run(
     reports["Simplified_TFT"], y_true, y_pred, _ = evaluate_deep_model(tft, test_ds, "Simplified_TFT", device=device)
     record_price_predictions("Simplified_TFT", y_true, y_pred)
     export_predictions_csv("Simplified_TFT", y_true, y_pred)
+    reports["Simplified_TFT"]["event_window"] = event_window_metrics(y_true, y_pred)
 
     print("\n=== Evaluating ARIMA baseline (walk-forward, subsampled origins) ===")
     arima_report = evaluate_arima(panel, test_ds, horizon=DATA_CFG.horizon, max_origins=15 if quick else 40)
@@ -171,6 +215,7 @@ def run(
     }
     record_price_predictions("Random_Walk_Drift", rwd_true, rwd_pred)
     export_predictions_csv("Random_Walk_Drift", rwd_true, rwd_pred)
+    reports["Random_Walk_Drift"]["event_window"] = event_window_metrics(rwd_true, rwd_pred)
 
     print("\n=== Summary (overall test-set metrics) ===")
     for name, rep in reports.items():
@@ -196,6 +241,42 @@ def run(
     print(f"Human-readable report written to {html_path}  (charts also saved under {report_dir}/charts/)")
 
     return reports
+
+
+def calibrate_abstention(val_true, val_pred, test_true, test_pred, min_val_coverage: float = 0.05):
+    """Roadmap item 5 -- calibrated abstention: choose the conviction
+    threshold ON THE VALIDATION SET (split-conformal style: scan |forecast|
+    quantiles, keep the one with the best selective validation accuracy at
+    workable coverage), then apply that FIXED threshold to the test set.
+    The reported test accuracy/coverage therefore involves no test-set
+    tuning -- unlike the descriptive DirAcc@coverage curves, this is a
+    deployable decision rule.
+    """
+    conf_val = np.abs(val_pred).ravel()
+    hits_val = (np.sign(val_true) == np.sign(val_pred)).ravel()
+    best = None
+    for q in np.arange(0.50, 0.96, 0.05):
+        tau = float(np.quantile(conf_val, q))
+        sel = conf_val >= tau
+        if sel.mean() < min_val_coverage:
+            continue
+        acc = float(hits_val[sel].mean())
+        if best is None or acc > best["val_selective_acc"]:
+            best = {
+                "conf_quantile": round(float(q), 2),
+                "tau": tau,
+                "val_selective_acc": acc,
+                "val_coverage": float(sel.mean()),
+            }
+    if best is None:
+        return None
+    conf_t = np.abs(test_pred).ravel()
+    hits_t = (np.sign(test_true) == np.sign(test_pred)).ravel()
+    sel_t = conf_t >= best["tau"]
+    best["test_coverage"] = float(sel_t.mean())
+    best["test_selective_acc"] = float(hits_t[sel_t].mean()) if sel_t.any() else None
+    best["test_acc_unfiltered"] = float(hits_t.mean())
+    return best
 
 
 def _average_xgb_trust(hybrid_model, test_ds_xgb, device: str = "cpu") -> float:
@@ -228,6 +309,9 @@ if __name__ == "__main__":
     parser.add_argument("--signal_strength", type=float, default=None,
                          help="Synthetic-mode only: strength of the injected causal sentiment/macro -> return signal. 0.0 = pure noise ablation.")
     parser.add_argument("--report_dir", type=str, default="report")
+    parser.add_argument("--interval", type=str, default="1d",
+                         help="Bar interval for --source real: '1d' (daily, full history -- the default per the "
+                              "improvement roadmap) or intraday like '5m' (capped at 60 trailing days by Yahoo).")
     parser.add_argument("--classification_weight", type=float, default=None,
                          help="Weight of the auxiliary directional-classification loss. Disabled (0.0) by default -- "
                               "testing showed it overfits fast and hurts accuracy on ~1000-window datasets. "
@@ -236,5 +320,5 @@ if __name__ == "__main__":
     run(
         pair=args.pair, n_days=args.n_days, epochs=args.epochs, quick=args.quick, seed=args.seed,
         source=args.source, signal_strength=args.signal_strength, report_dir=args.report_dir,
-        classification_weight=args.classification_weight,
+        classification_weight=args.classification_weight, interval=args.interval,
     )

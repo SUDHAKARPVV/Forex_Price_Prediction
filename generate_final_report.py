@@ -523,7 +523,7 @@ def main():
     d = load_all()
     charts = make_charts(d)
     html = build_html(d, charts)
-    out = os.path.join(REPORT_DIR, "report.html")
+    out = os.path.join(REPORT_DIR, "final_report.html")
     with open(out, "w") as f:
         f.write(html)
     print(f"Final report written to {out}  ({len(charts)} charts under {CHART_DIR}/)")
