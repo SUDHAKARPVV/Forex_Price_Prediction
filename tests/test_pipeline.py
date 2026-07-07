@@ -308,13 +308,14 @@ def test_cnn_layer():
     m = CNNLocalFeatureExtractor()
     x = torch.randn(8, DATA_CFG.lookback, MODEL_CFG.cnn_in_channels)
     out = m(x)
-    assert out.shape == (8, DATA_CFG.lookback // MODEL_CFG.cnn_pool_kernel, MODEL_CFG.cnn_out_channels)
+    # Causal dilated CNN preserves full temporal resolution (no pooling)
+    assert out.shape == (8, DATA_CFG.lookback, MODEL_CFG.cnn_out_channels)
     print("[PASS] CNN layer")
 
 
 def test_bilstm_layer():
     m = BiLSTMTemporalLayer()
-    t_prime = DATA_CFG.lookback // MODEL_CFG.cnn_pool_kernel
+    t_prime = DATA_CFG.lookback  # full resolution -- pooling removed
     x = torch.randn(8, t_prime, MODEL_CFG.cnn_out_channels)
     out = m(x)
     assert out.shape == (8, t_prime, MODEL_CFG.lstm_output)
@@ -323,7 +324,7 @@ def test_bilstm_layer():
 
 def test_transformer_block():
     m = TransformerContextBlock()
-    t_prime = DATA_CFG.lookback // MODEL_CFG.cnn_pool_kernel
+    t_prime = DATA_CFG.lookback  # full resolution -- pooling removed
     x = torch.randn(8, t_prime, MODEL_CFG.transformer_d_model)
     out = m(x)
     assert out.shape == x.shape
@@ -335,7 +336,9 @@ def test_regime_aware_layer():
     context_dim = MODEL_CFG.transformer_d_model + MODEL_CFG.skip_embed_dim
     context = torch.randn(8, context_dim)
     regime_ctx = torch.randn(8, 2)
-    forecast, gate, band = m(context, regime_ctx)
+    forecast, gate, band, log_var = m(context, regime_ctx)
+    assert log_var.shape == (8, MODEL_CFG.horizon)
+    assert (band > 0).all(), "predicted sigma must be positive"
     assert forecast.shape == (8, MODEL_CFG.horizon)
     assert gate.shape == (8, 1)
     assert (gate >= 0).all() and (gate <= 1).all()
@@ -424,7 +427,7 @@ def test_transformer_causal_masking():
     torch.manual_seed(0)
     m_causal = TransformerContextBlock(causal=True)
     m_causal.eval()
-    t_prime = DATA_CFG.lookback // MODEL_CFG.cnn_pool_kernel
+    t_prime = DATA_CFG.lookback  # full resolution -- pooling removed
 
     x1 = torch.randn(1, t_prime, MODEL_CFG.transformer_d_model)
     x2 = x1.clone()

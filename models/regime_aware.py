@@ -1,23 +1,29 @@
 """
-Regime-aware output layer (Section 3.1.5, Figure 6).
+Regime-aware output layer (Section 3.1.5, Figure 6), revised to a
+PROBABILISTIC distribution head (GARCH emulation).
 
 A lightweight volatility-regime detector consumes the pooled global context
 vector (plus rolling realised-volatility / ATR side-inputs) and produces a
-soft gate in [0, 1] over two decoder heads:
-    - stable-regime head:      standard multi-step decoder, tight bands
-    - high-volatility head:    trained emphasis on directional accuracy
+soft gate in [0, 1] over two decoder heads (stable-regime / high-vol),
+exactly as before -- but each head now parameterises a full Gaussian per
+horizon step instead of a point estimate:
 
-Rather than a hard routing decision (which would be non-differentiable),
-we use a *soft* gate (Figure 6's routing logic implemented as a learned
-convex combination) so the whole network remains end-to-end trainable,
-consistent with the "soft-gated dual MLP decoder heads" description.
+    head output (2k):  mu_h  and  log sigma^2_h   for h = 1..k
+
+Why: GARCH's advantage is that it models conditional VARIANCE explicitly;
+a point-MSE network on fat-tailed returns is pulled toward predicting a
+conservative ~0 mean, destroying directional conviction. Trained under
+Gaussian negative log-likelihood (training/train.py), the network must
+output its own per-step variance -- learning volatility clustering the way
+GARCH does, and giving a principled conviction measure |mu|/sigma (a
+t-statistic) that calibrates the abstention rule dynamically.
 """
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
 
-from config import MODEL_CFG
+from config import MODEL_CFG, TRAIN_CFG
 
 
 class VolatilityRegimeDetector(nn.Module):
@@ -39,21 +45,29 @@ class VolatilityRegimeDetector(nn.Module):
 
 
 class DecoderHead(nn.Module):
-    """Standard multi-step MLP decoder producing k point forecasts."""
+    """Multi-step probabilistic decoder: k means + k log-variances.
+
+    log-variance is expressed in return_scale units (i.e. the variance of
+    (y - mu)/return_scale), so a zero-initialised head starts at sigma =
+    one representative return magnitude -- a sane prior."""
 
     def __init__(self, context_dim: int = MODEL_CFG.transformer_d_model, hidden: int = MODEL_CFG.regime_hidden, horizon: int = MODEL_CFG.horizon):
         super().__init__()
+        self.horizon = horizon
         self.net = nn.Sequential(
             nn.Linear(context_dim, hidden * 2),
             nn.ReLU(),
             nn.Dropout(MODEL_CFG.decoder_dropout),
             nn.Linear(hidden * 2, hidden),
             nn.ReLU(),
-            nn.Linear(hidden, horizon),
+            nn.Linear(hidden, horizon * 2),
         )
 
-    def forward(self, context: torch.Tensor) -> torch.Tensor:
-        return self.net(context)
+    def forward(self, context: torch.Tensor):
+        out = self.net(context)
+        mu, log_var = out[:, : self.horizon], out[:, self.horizon :]
+        log_var = torch.clamp(log_var, min=-8.0, max=8.0)  # numerical safety for exp()
+        return mu, log_var
 
 
 class RegimeAwareOutputLayer(nn.Module):
@@ -67,10 +81,6 @@ class RegimeAwareOutputLayer(nn.Module):
         self.regime_detector = VolatilityRegimeDetector(context_dim, hidden)
         self.stable_head = DecoderHead(context_dim, hidden, horizon)
         self.high_vol_head = DecoderHead(context_dim, hidden, horizon)
-        # Learnable per-horizon widening factor applied to the high-vol head's
-        # implicit uncertainty (used only when reporting bands, not in the
-        # point-forecast loss).
-        self.uncertainty_scale = nn.Parameter(torch.ones(horizon) * 1.5)
 
     def forward(self, context: torch.Tensor, regime_ctx: torch.Tensor):
         """
@@ -78,15 +88,17 @@ class RegimeAwareOutputLayer(nn.Module):
         regime_ctx: (B, 2) [realised_vol, atr] at the forecast origin
 
         Returns:
-            forecast: (B, k) final regime-conditioned point forecast
+            forecast: (B, k) regime-blended mean forecast (log-return units)
             gate:     (B, 1) high-volatility gate weight (for diagnostics/XAI)
-            band:     (B, k) widened uncertainty band estimate
+            band:     (B, k) predicted sigma in RAW log-return units
+            log_var:  (B, k) predicted log-variance in return_scale units
+                      (consumed by the Gaussian NLL loss)
         """
-        gate = self.regime_detector(context, regime_ctx)          # (B, 1)
-        stable_out = self.stable_head(context)                     # (B, k)
-        high_vol_out = self.high_vol_head(context)                 # (B, k)
+        gate = self.regime_detector(context, regime_ctx)            # (B, 1)
+        mu_s, lv_s = self.stable_head(context)                      # (B, k) each
+        mu_h, lv_h = self.high_vol_head(context)
 
-        forecast = (1 - gate) * stable_out + gate * high_vol_out   # soft routing
-        base_band = torch.abs(high_vol_out - stable_out) + 1e-4
-        band = base_band * (1 + gate * (self.uncertainty_scale - 1))
-        return forecast, gate, band
+        forecast = (1 - gate) * mu_s + gate * mu_h                  # soft routing
+        log_var = (1 - gate) * lv_s + gate * lv_h
+        band = torch.exp(0.5 * log_var) * TRAIN_CFG.return_scale    # sigma, raw units
+        return forecast, gate, band, log_var

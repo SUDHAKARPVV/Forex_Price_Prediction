@@ -178,7 +178,7 @@ def run(
     # thumb on the comparison scale (the simpler baselines are still tuned
     # at their own sensible default of TRAIN_CFG.lr).
     hybrid, hist = train_model(hybrid, train_ds_xgb, val_ds_xgb, epochs=epochs, lr=TRAIN_CFG.lr * 0.5, device=device, classification_weight=classification_weight, seed=seed)
-    reports["Hybrid_CNN_LSTM_Transformer"], y_true, y_pred, _ = evaluate_deep_model(hybrid, test_ds_xgb, "Hybrid_CNN_LSTM_Transformer", device=device)
+    reports["Hybrid_CNN_LSTM_Transformer"], y_true, y_pred, test_band = evaluate_deep_model(hybrid, test_ds_xgb, "Hybrid_CNN_LSTM_Transformer", device=device)
     record_price_predictions("Hybrid_CNN_LSTM_Transformer", y_true, y_pred)
     export_predictions_csv("Hybrid_CNN_LSTM_Transformer", y_true, y_pred)
     reports["Hybrid_CNN_LSTM_Transformer"]["event_window"] = event_window_metrics(y_true, y_pred)
@@ -186,8 +186,14 @@ def run(
     # Calibrated abstention (roadmap item 5): threshold picked on VALIDATION
     # predictions only, then applied frozen to the test set.
     from training.evaluate import collect_predictions
-    val_true, val_pred, _, _ = collect_predictions(hybrid, val_ds_xgb, device=device)
-    abstention = calibrate_abstention(val_true, val_pred, y_true, y_pred)
+    val_true, val_pred, _, _, val_band = collect_predictions(hybrid, val_ds_xgb, device=device)
+    # Conviction = |mu| / sigma (a t-statistic): the probabilistic head's
+    # predicted variance calibrates the abstention thresholds dynamically,
+    # replacing the crude |forecast| magnitude cut.
+    val_conf = np.abs(val_pred) / (val_band + 1e-12) if val_band is not None else None
+    test_conf = np.abs(y_pred) / (test_band + 1e-12) if test_band is not None else None
+    abstention = calibrate_abstention(val_true, val_pred, y_true, y_pred,
+                                      val_conf=val_conf, test_conf=test_conf)
     reports["Hybrid_CNN_LSTM_Transformer"]["calibrated_abstention"] = abstention
     if abstention:
         print(f"[hybrid] calibrated abstention: act on {abstention['test_coverage']*100:.0f}% of signals "
@@ -201,9 +207,12 @@ def run(
         # re-derived at the SAME validation quantile but on the h1 column
         # only -- still validation-calibrated, no test tuning.
         from utils.backtest import conviction_backtest
-        tau_h1 = float(np.quantile(np.abs(val_pred[:, 0]), abstention["conf_quantile"]))
+        val_conf_h1 = val_conf[:, 0] if val_conf is not None else np.abs(val_pred[:, 0])
+        test_conf_h1 = test_conf[:, 0] if test_conf is not None else np.abs(y_pred[:, 0])
+        tau_h1 = float(np.quantile(val_conf_h1, abstention["conf_quantile"]))
         bt_dates = [panel.dates[t] for t in test_ds.indices]
-        backtest = conviction_backtest(y_true[:, 0], y_pred[:, 0], bt_dates, tau=tau_h1, mode=abstention['mode'])
+        backtest = conviction_backtest(y_true[:, 0], y_pred[:, 0], bt_dates, tau=tau_h1,
+                                       mode=abstention['mode'], conviction=test_conf_h1)
         reports["Hybrid_CNN_LSTM_Transformer"]["backtest"] = backtest
         print(f"[backtest] conviction strategy ({backtest['mode']}): {backtest['total_return_pct']:+.2f}% net "
               f"(buy&hold {backtest['buy_hold_return_pct']:+.2f}%), Sharpe {backtest['annualised_sharpe']:.2f} "
@@ -279,7 +288,8 @@ def xgb_feature_importance_audit(xgb_model, feature_names):
     }
 
 
-def calibrate_abstention(val_true, val_pred, test_true, test_pred, min_val_coverage: float = 0.05):
+def calibrate_abstention(val_true, val_pred, test_true, test_pred, min_val_coverage: float = 0.05,
+                         val_conf=None, test_conf=None):
     """Calibrated abstention WITH a momentum-reversal (follow/fade) mode.
 
     Two decisions are made ON THE VALIDATION SET only (split-conformal
@@ -302,7 +312,9 @@ def calibrate_abstention(val_true, val_pred, test_true, test_pred, min_val_cover
     unlike the descriptive DirAcc@coverage curves, this is a deployable
     decision rule.
     """
-    conf_val = np.abs(val_pred).ravel()
+    # Conviction: |mu|/sigma t-statistic when the probabilistic head's
+    # variance is available (val_conf/test_conf), else |forecast|.
+    conf_val = (val_conf if val_conf is not None else np.abs(val_pred)).ravel()
     val_sign_hits = (np.sign(val_true) == np.sign(val_pred)).ravel()
     best = None
     for q in np.arange(0.50, 0.96, 0.05):
@@ -323,7 +335,7 @@ def calibrate_abstention(val_true, val_pred, test_true, test_pred, min_val_cover
     if best is None:
         return None
     direction = 1.0 if best["mode"] == "follow" else -1.0
-    conf_t = np.abs(test_pred).ravel()
+    conf_t = (test_conf if test_conf is not None else np.abs(test_pred)).ravel()
     hits_t = (np.sign(test_true) == np.sign(direction * test_pred)).ravel()
     sel_t = conf_t >= best["tau"]
     best["test_coverage"] = float(sel_t.mean())

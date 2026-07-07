@@ -33,7 +33,7 @@ from baselines.arima_baseline import rolling_arima_evaluation
 def collect_predictions(model, dataset, device: str = "cpu"):
     loader = DataLoader(dataset, batch_size=64, shuffle=False)
     model.eval()
-    all_true, all_pred, all_logits, all_regime_ctx = [], [], [], []
+    all_true, all_pred, all_logits, all_regime_ctx, all_bands = [], [], [], [], []
     with torch.no_grad():
         for batch in loader:
             if len(batch) == 4:
@@ -46,22 +46,27 @@ def collect_predictions(model, dataset, device: str = "cpu"):
             out = model(x, regime_ctx, xgb_pred)
             pred = out["forecast"] if isinstance(out, dict) else out
             logits = out.get("direction_logits") if isinstance(out, dict) else None
+            band = out.get("band") if isinstance(out, dict) else None
             all_true.append(y.numpy())
             all_pred.append(pred.cpu().numpy())
             all_regime_ctx.append(regime_ctx.cpu().numpy())
             if logits is not None:
                 all_logits.append(logits.cpu().numpy())
+            if band is not None:
+                all_bands.append(band.cpu().numpy())
     logits_array = np.concatenate(all_logits, axis=0) if all_logits else None
+    band_array = np.concatenate(all_bands, axis=0) if all_bands else None
     return (
         np.concatenate(all_true, axis=0),
         np.concatenate(all_pred, axis=0),
         logits_array,
         np.concatenate(all_regime_ctx, axis=0),
+        band_array,
     )
 
 
 def evaluate_deep_model(model, dataset, model_name: str, device: str = "cpu"):
-    y_true, y_pred, direction_logits, regime_ctx = collect_predictions(model, dataset, device=device)
+    y_true, y_pred, direction_logits, regime_ctx, band = collect_predictions(model, dataset, device=device)
     regime_labels = label_regimes(regime_ctx[:, 0])  # realised vol column
 
     overall = summarize(y_true, y_pred)
@@ -80,7 +85,7 @@ def evaluate_deep_model(model, dataset, model_name: str, device: str = "cpu"):
         "per_horizon": per_horizon,
         "regime_segmented": regime_segmented,
     }
-    return report, y_true, y_pred, regime_labels
+    return report, y_true, y_pred, band
 
 
 # ARIMA/GARCH are deterministic given the price series, and full-origin

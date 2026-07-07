@@ -1,65 +1,51 @@
 """
-Assembles the full pipeline described in Figure 1 / Section 3.2:
+Hybrid CNN-LSTM-Transformer, fifth major architecture revision
+(dual-tower cross-attention edition). Pipeline:
 
-    Feature Fusion -> CNN (local) -> Bi-LSTM (temporal) -> Transformer (global)
-    -> Regime-Aware Output -> multi-step forecast for t+1 ... t+k
+    Quant tower:  technical+macro (18) -> projection -> CAUSAL DILATED CNN
+                  (full 60-bar resolution, no pooling) + regime embedding
+    Text tower:   sentiment stream (12) -> small GRU sequence encoder
+    Fusion node:  multi-head CROSS-ATTENTION (quant = Q, text = K/V) with a
+                  learned per-timestep text-presence gate on a residual path
+    Global stage: causal Transformer encoder FIRST (regime matching over
+                  raw projected bars), then light recurrent smoothing
+                  (single-layer Bi-LSTM + Bi-GRU, blended per sample)
+    Decoders:     regime-aware PROBABILISTIC heads (mu, log sigma^2 per
+                  horizon step) + frozen XGBoost expert, blended by a
+                  regime-driven per-horizon trust gate
 
-Plus three additions found necessary during evaluation:
+Design history (each revision responded to a measured failure; full
+evidence trail in the git log):
 
-1. A "wide & deep"-style skip connection: a raw summary of the
-   macro + sentiment features is fed directly into the regime-aware decoder
-   alongside the deep Transformer context.
+1. Post-hoc XGBoost ensembling -> context-embedding fusion (overfit) ->
+   additive residual (collapsed into XGBoost) -> convex two-expert blend
+   with deep supervision (stable) -> regime-driven trust gate (the
+   feature audit showed the tabular expert ignores sentiment dynamics,
+   so volatility context now routes between experts).
 
-2. An early regime embedding, added to the CNN's output before the
-   Bi-LSTM/Transformer stages -- the original design only exposed regime
-   information at the very end, via the output gate in
-   models/regime_aware.py, which meant the sequential/attention layers
-   themselves had no way to adapt their processing to the current
-   volatility regime.
+2. Early fusion -> DUAL-TOWER with late cross-attention (this revision):
+   the single early fusion gate projected 17 news-less years of zeroed
+   text alongside clean technicals, diluting them; now the quant tower
+   runs uncorrupted across the full history and text attends in only
+   where it exists (soft per-timestep presence gate; a hard bypass is
+   impossible after train-split normalisation, so the gate learns it).
 
-3. A two-expert convex blend with deep supervision (the XGBoost fusion,
-   third iteration). History of this branch, kept because each failure
-   mode shaped the current design:
+3. MaxPool CNN -> CAUSAL DILATED CNN (this revision): pooling blurred
+   the lag-1/lag-2 transitions where ARIMA/GARCH earn their accuracy.
 
-     * Iteration 1 fused XGBoost's prediction only as a context EMBEDDING
-       -- overfit immediately, and the regularisation needed to stop that
-       blunted the signal (Hybrid scored BELOW standalone XGBoost).
-     * Iteration 2 used a boosting-style additive residual
-       (forecast = trust * xgb_pred + zero-initialised deep correction).
-       The anchor held -- the Hybrid stopped losing to XGBoost -- but it
-       also swallowed the model: any correction that grew was punished by
-       the MSE term before its sign benefits registered, so the trust
-       gate saturated at ~1.0, the correction collapsed to ~0, and the
-       Hybrid converged to a statistical tie with XGBoost (0.586 vs
-       0.587 mean DirAcc over 3 seeds), while earlier rounds had shown
-       the deep pathway ALONE reaching 0.636.
+4. Recurrent-then-Transformer -> TRANSFORMER-FIRST (this revision):
+   recurrent stages are lossy low-pass filters; attention now scans the
+   raw projected sequence for regime matches before light single-layer
+   recurrent smoothing extracts the final trend representation.
 
-   Current design: the deep pathway is trained as a COMPLETE forecaster
-   in its own right (an auxiliary deep-supervision loss on its output --
-   see training/train.py:total_loss), and the final forecast is a
-   learned, per-sample convex blend between the two experts:
+5. Point-MSE decoder -> PROBABILISTIC (mu, sigma) heads under Gaussian
+   NLL (this revision): emulates GARCH's conditional-variance modelling
+   instead of ceding it, and |mu|/sigma provides a t-statistic conviction
+   measure for the abstention rule and backtest.
 
-       forecast = xgb_trust * xgb_pred + (1 - xgb_trust) * deep_forecast
-
-   with `xgb_trust` = sigmoid(gate) initialised neutral (bias 0 -> 0.5).
-   The gate is an arbiter between two competent experts rather than an
-   anchor one of them must fight: deep supervision means the deep branch
-   cannot collapse (its own loss term keeps it a full forecaster), and
-   convexity means the blend's error is bounded by the experts' errors
-   rather than compounding them. XGBoost's prediction is still also
-   embedded into the context vector, so the decoder and the gate can
-   CONDITION on what the trees predicted.
-
-4. A sentiment conditioning path (this round): the sentiment pipeline's
-   output -- the continuous FinBERT-derived rolling scores together with
-   the discrete buy/sell/hold/none signal derived from them
-   (data/sentiment.py:derive_trading_signals) -- is embedded and added to
-   the CNN's output at every timestep, the same early-conditioning
-   mechanism as the volatility regime embedding, which was the single
-   biggest win of the earlier rounds. The per-timestep sentiment columns
-   are also part of the 26-feature input window itself, so the CNN sees
-   the full 60-bar sentiment history, while this embedding highlights the
-   CURRENT sentiment state.
+6. Modality masking: each training sample's text stream is zeroed with
+   p = sentiment_dropout_p, conditioning the network to treat news as a
+   dynamic, sometimes-absent shock channel.
 """
 from __future__ import annotations
 
@@ -67,7 +53,6 @@ import torch
 import torch.nn as nn
 
 from config import DATA_CFG, MODEL_CFG
-from models.feature_fusion import FeatureFusion
 from models.cnn_layer import CNNLocalFeatureExtractor
 from models.lstm_layer import BiLSTMTemporalLayer, BiGRUTemporalLayer
 from models.transformer_block import TransformerContextBlock
@@ -77,91 +62,69 @@ from models.regime_aware import RegimeAwareOutputLayer
 class HybridCNNLSTMTransformer(nn.Module):
     def __init__(self):
         super().__init__()
-        self.fusion = FeatureFusion()
-        self.cnn = CNNLocalFeatureExtractor()
-        self.bilstm = BiLSTMTemporalLayer()
-        # Parallel Bi-GRU branch: same geometry as the Bi-LSTM (2 stacked
-        # bidirectional layers, 128/direction -> 256), different recurrent
-        # cell. A learned per-sample gate blends the two sequences before
-        # the Transformer, so the network chooses -- window by window --
-        # between the LSTM's longer-memory cell state and the GRU's
-        # faster-adapting two-gate dynamics.
-        self.bigru = BiGRUTemporalLayer()
-        self.temporal_gate = nn.Linear(MODEL_CFG.lstm_output * 2, 1)
-        # Neutral start: sigmoid(0) = 0.5 -- neither recurrent cell is
-        # privileged until the loss says otherwise.
-        nn.init.zeros_(self.temporal_gate.weight)
-        nn.init.zeros_(self.temporal_gate.bias)
+        n_quant = DATA_CFG.n_technical_features + DATA_CFG.n_macro_features   # 18
+        n_text = DATA_CFG.n_sentiment_features                                # 12
+        d_local = MODEL_CFG.cnn_out_channels                                  # 128
+        d_model = MODEL_CFG.transformer_d_model                               # 256
 
-        # Recurrent output is 256-dim, which matches transformer_d_model
-        # exactly, so no extra projection is needed before the Transformer.
-        assert MODEL_CFG.lstm_output == MODEL_CFG.transformer_d_model, (
-            "Recurrent output width must match Transformer d_model (both = 256, Section 3.1.3/3.1.4)"
+        # --- Tower A: the quantitative engine (uncorrupted by text) ---
+        self.quant_proj = nn.Sequential(
+            nn.Linear(n_quant, MODEL_CFG.cnn_in_channels),
+            nn.LayerNorm(MODEL_CFG.cnn_in_channels),
+            nn.GELU(),
         )
-        self.transformer = TransformerContextBlock()
+        self.cnn = CNNLocalFeatureExtractor()
 
-        # Early regime embedding: maps the raw [realised_vol, ATR] context
-        # into a learned vector added to the CNN's output at every
-        # timestep, BEFORE the Bi-LSTM/Transformer stages, so the whole
-        # sequential/attention pipeline can condition on volatility regime,
-        # not just the final output gate.
+        # Early regime embedding, added to the quant tower's local features
+        # at every timestep (kept from the round where it was the single
+        # biggest win): the whole downstream pipeline conditions on the
+        # current volatility regime, not just the final gates.
         self.regime_embed = nn.Sequential(
             nn.Linear(2, MODEL_CFG.regime_hidden),
             nn.GELU(),
-            nn.Linear(MODEL_CFG.regime_hidden, MODEL_CFG.cnn_out_channels),
+            nn.Linear(MODEL_CFG.regime_hidden, d_local),
         )
 
-        # Sentiment conditioning embedding: maps the current (last-bar)
-        # sentiment snapshot -- the 8 continuous FinBERT-derived rolling
-        # scores AND the 4 one-hot buy/sell/hold/none signal columns -- into
-        # a learned vector added to the CNN's output at every timestep,
-        # exactly like the regime embedding above. The Bi-LSTM/Transformer
-        # stages therefore process the sequence CONDITIONED on both what
-        # the news flow is currently saying (score) and what it implies
-        # (discrete signal).
-        self.signal_embed = nn.Sequential(
-            nn.Linear(DATA_CFG.n_sentiment_features, MODEL_CFG.regime_hidden),
-            nn.GELU(),
-            nn.Linear(MODEL_CFG.regime_hidden, MODEL_CFG.cnn_out_channels),
-        )
+        # --- Tower B: the text engine (independent sentiment encoder) ---
+        self.text_gru = nn.GRU(n_text, d_local // 2, num_layers=1, batch_first=True)
+        self.text_proj = nn.Linear(d_local // 2, d_local)
 
-        # Pool the Transformer's output sequence into a single context vector
-        # per forecast origin: combine the last-position representation
-        # (recency) with an attention-weighted summary over the full window
-        # (global context), then project back to d_model.
-        self.pool_attn = nn.Linear(MODEL_CFG.transformer_d_model, 1)
+        # --- Fusion node: cross-attention with learned presence bypass ---
+        # Quant features query the text sequence; a per-timestep sigmoid
+        # gate (driven by the raw text features themselves) scales the
+        # attended output before the residual add, so windows with no news
+        # (the 'none' state) contribute ~nothing and the quant pathway
+        # passes through unchanged.
+        self.cross_attn = nn.MultiheadAttention(d_local, num_heads=4, batch_first=True,
+                                                dropout=MODEL_CFG.transformer_dropout)
+        self.text_gate = nn.Linear(n_text, 1)
+        self.attn_norm = nn.LayerNorm(d_local)
+
+        # --- Global stage: Transformer FIRST, then light recurrence ---
+        self.to_dmodel = nn.Linear(d_local, d_model)
+        self.transformer = TransformerContextBlock()
+        self.bilstm = BiLSTMTemporalLayer(input_size=d_model, num_layers=1)
+        self.bigru = BiGRUTemporalLayer(input_size=d_model, num_layers=1)
+        self.temporal_gate = nn.Linear(MODEL_CFG.lstm_output * 2, 1)
+        nn.init.zeros_(self.temporal_gate.weight)
+        nn.init.zeros_(self.temporal_gate.bias)
+
+        # Pool the temporal sequence into a single context vector: combine
+        # the last position (recency) with an attention-weighted summary.
+        self.pool_attn = nn.Linear(d_model, 1)
         self.context_combine = nn.Sequential(
-            nn.Linear(MODEL_CFG.transformer_d_model * 2, MODEL_CFG.transformer_d_model),
+            nn.Linear(d_model * 2, d_model),
             nn.GELU(),
         )
 
-        # Wide & deep skip: a small embedding of the raw (most recent-bar)
-        # macro + sentiment features, bypassing CNN/Bi-LSTM/Transformer.
+        # Wide & deep skip: raw (most recent-bar) macro + sentiment features.
         skip_in_dim = DATA_CFG.n_macro_features + DATA_CFG.n_sentiment_features
         self.skip_proj = nn.Sequential(
             nn.Linear(skip_in_dim, MODEL_CFG.skip_embed_dim),
             nn.GELU(),
         )
 
-        # --- Boosting-style residual XGBoost fusion branch ---
-        # Two roles for XGBoost's frozen k-step forecast:
-        #
-        #   1. RESIDUAL ANCHOR (the fix for the previous round's failure):
-        #      the RAW prediction is added directly to the final forecast,
-        #      scaled by a learned per-sample trust gate: xgb_trust * xgb_pred.
-        #      Combined with zero-initialising the decoder heads' final
-        #      layers (below), the whole model *starts* training as
-        #      "XGBoost with trust ~= sigmoid(bias)" and only has to learn
-        #      the residual correction -- the gradient-boosting recipe.
-        #
-        #   2. CONTEXT SIGNAL: a LayerNorm-ed + dropout-ed embedding of the
-        #      same prediction is concatenated into the context vector, so
-        #      the decoder and gates can CONDITION on what the trees
-        #      predicted. Regularisation stays on this branch only (an
-        #      earlier round showed the raw embedding path memorising the
-        #      training set); the residual path uses the raw, un-dropped
-        #      prediction, because dropout on an additive output term would
-        #      just inject forecast noise.
+        # --- XGBoost expert branch (frozen tree ensemble, fused inside) ---
         self.xgb_input_norm = nn.LayerNorm(MODEL_CFG.horizon)
         self.xgb_input_dropout = nn.Dropout(MODEL_CFG.decoder_dropout)
         self.xgb_embed = nn.Sequential(
@@ -170,40 +133,24 @@ class HybridCNNLSTMTransformer(nn.Module):
             nn.Dropout(MODEL_CFG.decoder_dropout),
             nn.Linear(MODEL_CFG.regime_hidden, MODEL_CFG.xgb_embed_dim),
         )
-        # REGIME-DRIVEN per-horizon blend gate. Earlier iterations let the
-        # gate read the full context (deep representation + skip + xgb
-        # embedding); the feature audit showed a calibration disconnect --
-        # the tabular XGBoost expert assigns ~zero importance to the
-        # sentiment-dynamics features the deep pathway leans on, so the
-        # two experts specialise in DIFFERENT regimes: the trees in quiet,
-        # technical/macro-driven stretches, the deep pathway around
-        # news/volatility shocks. The gate therefore now consumes the
-        # volatility regime context (realised vol, ATR) directly and
-        # nothing else: it learns "how volatile is this window" -> "which
-        # expert to trust, per horizon", e.g. leaning to the deep pathway
-        # during high-volatility event windows and blending back into
-        # XGBoost during quiet ones.
+        # Regime-driven per-horizon trust gate: volatility context decides
+        # the expert blend (quiet -> trees, turbulent -> deep pathway).
         self.xgb_trust_gate = nn.Linear(2, MODEL_CFG.horizon)
-        # Start the blend gate NEUTRAL (sigmoid(0) = 0.5) and
-        # input-independent: neither expert is privileged at epoch 0, and
-        # the weights learn regime-based arbitration as training progresses.
         nn.init.zeros_(self.xgb_trust_gate.weight)
         nn.init.zeros_(self.xgb_trust_gate.bias)
 
-        context_dim = MODEL_CFG.transformer_d_model + MODEL_CFG.skip_embed_dim + MODEL_CFG.xgb_embed_dim
+        context_dim = d_model + MODEL_CFG.skip_embed_dim + MODEL_CFG.xgb_embed_dim
         self.regime_output = RegimeAwareOutputLayer(context_dim=context_dim)
         # Zero-init the decoder heads' final layers: the deep expert starts
-        # as a zero forecast (so epoch-0 output is 0.5 * XGBoost, not
-        # XGBoost plus random noise) and grows under its own deep-supervision
-        # loss term from the first optimizer step.
+        # at mu = 0 with sigma = one representative return (log_var = 0),
+        # so epoch-0 output is 0.5 * XGBoost with a sane uncertainty prior.
         for head in (self.regime_output.stable_head, self.regime_output.high_vol_head):
             final_linear = head.net[-1]
             nn.init.zeros_(final_linear.weight)
             nn.init.zeros_(final_linear.bias)
 
-        # Auxiliary directional classification head: predicts P(return > 0)
-        # at each horizon step directly from the context vector, trained
-        # with binary cross-entropy against the true sign.
+        # Auxiliary directional classification head (disabled by default in
+        # the loss; kept for ablations).
         self.direction_head = nn.Sequential(
             nn.Linear(context_dim, MODEL_CFG.regime_hidden),
             nn.ReLU(),
@@ -212,69 +159,61 @@ class HybridCNNLSTMTransformer(nn.Module):
         )
 
     def pool_context(self, seq: torch.Tensor) -> torch.Tensor:
-        """seq: (B, T', d_model) -> (B, d_model), combining last-position
-        recency with an attention-weighted global summary."""
-        last = seq[:, -1, :]                                   # (B, d_model)
-        weights = torch.softmax(self.pool_attn(seq), dim=1)    # (B, T', 1)
-        summary = (seq * weights).sum(dim=1)                   # (B, d_model)
+        """seq: (B, T, d_model) -> (B, d_model)."""
+        last = seq[:, -1, :]
+        weights = torch.softmax(self.pool_attn(seq), dim=1)
+        summary = (seq * weights).sum(dim=1)
         return self.context_combine(torch.cat([last, summary], dim=-1))
 
     def forward(self, x: torch.Tensor, regime_ctx: torch.Tensor, xgb_pred: torch.Tensor = None):
         """
-        x:          (B, T=60, 22) fused raw feature window
+        x:          (B, T=60, 30) fused raw feature window
         regime_ctx: (B, 2) [realised_vol, atr] at the forecast origin
-        xgb_pred:   (B, k) XGBoost's point forecast for the same window,
-                    precomputed by a separately-fitted XGBoostForexModel
-                    (see baselines/xgboost_baseline.py:XGBAugmentedDataset).
-                    If None, falls back to a zero vector -- lets the model
-                    still run (e.g. for unit tests, or an ablation
-                    comparing with/without the XGBoost branch) without
-                    requiring a fitted XGBoost model, at the cost of the
-                    fusion branch contributing nothing useful.
+        xgb_pred:   (B, k) the frozen XGBoost expert's forecast (zeros if None)
 
         Returns dict with:
-            forecast:        (B, k)   final multi-step point forecast (log-return space)
-            gate:             (B, 1)   high-volatility routing weight (models/regime_aware.py)
-            xgb_trust:        (B, k)   learned per-horizon weight on the XGBoost expert, in [0,1]
-            band:             (B, k)   uncertainty band estimate
-            direction_logits: (B, k)   auxiliary directional-classification logits
+            forecast:         (B, k) blended mean forecast (log-return units)
+            deep_forecast:    (B, k) deep expert's mean alone (deep supervision)
+            band:             (B, k) predicted sigma, raw log-return units
+            log_var:          (B, k) predicted log-variance (return_scale units)
+            gate, xgb_trust, direction_logits, context: as before
         """
+        n_text = DATA_CFG.n_sentiment_features
+
         if self.training and MODEL_CFG.sentiment_dropout_p > 0:
-            # Modality masking (text dropout): zero the whole sentiment
-            # stream for a random subset of samples, so the CNN/recurrent
-            # stages build representations that survive news-less windows
-            # (most of the pre-2017 archive) instead of over-relying on a
-            # single stream. Zero in train-normalised space = the neutral
-            # "average sentiment state". The mask also propagates to the
-            # sentiment conditioning embedding and the skip connection,
-            # since both read from x.
+            # Modality masking: zero the whole text stream for a random
+            # subset of samples (see module docstring, item 6).
             drop = torch.rand(x.size(0), device=x.device) < MODEL_CFG.sentiment_dropout_p
             if drop.any():
                 x = x.clone()
-                x[drop, :, -DATA_CFG.n_sentiment_features:] = 0.0
+                x[drop, :, -n_text:] = 0.0
 
-        fused = self.fusion(x)              # (B, T, 64)
-        local = self.cnn(fused)             # (B, T/2, 128)
+        quant = x[:, :, :-n_text]           # (B, T, 18) technical + macro
+        text = x[:, :, -n_text:]            # (B, T, 12) sentiment stream
 
-        regime_embed = self.regime_embed(regime_ctx)          # (B, 128)
-        # Current (last-bar) sentiment snapshot: 8 continuous FinBERT
-        # rolling scores + 4 one-hot buy/sell/hold/none signal columns --
-        # the LAST n_sentiment_features columns of the fused panel
-        # (data/sentiment.py:build_sentiment_features ordering).
-        sentiment_snapshot = x[:, -1, -DATA_CFG.n_sentiment_features:]  # (B, 12)
-        signal_embed = self.signal_embed(sentiment_snapshot)            # (B, 128)
-        # broadcast-add both conditioning vectors across all T/2 timesteps
-        local = local + (regime_embed + signal_embed).unsqueeze(1)
+        # Tower A: quantitative engine
+        local = self.cnn(self.quant_proj(quant))                 # (B, T, 128)
+        regime_embed = self.regime_embed(regime_ctx)             # (B, 128)
+        local = local + regime_embed.unsqueeze(1)
 
-        temporal_lstm = self.bilstm(local)  # (B, T/2, 256)
-        temporal_gru = self.bigru(local)    # (B, T/2, 256)
-        # Per-sample blend between the two recurrent branches, driven by
-        # their pooled summaries (mean over time keeps the gate cheap).
+        # Tower B: text engine
+        text_seq, _ = self.text_gru(text)                        # (B, T, 64)
+        text_kv = self.text_proj(text_seq)                       # (B, T, 128)
+
+        # Fusion node: cross-attention with presence-gated residual
+        attn_out, _ = self.cross_attn(local, text_kv, text_kv)   # (B, T, 128)
+        presence = torch.sigmoid(self.text_gate(text))           # (B, T, 1)
+        fused = self.attn_norm(local + presence * attn_out)      # (B, T, 128)
+
+        # Global stage: attention over full-resolution bars, then smoothing
+        seq = self.to_dmodel(fused)                              # (B, T, 256)
+        ctx_seq = self.transformer(seq)                          # (B, T, 256)
+        temporal_lstm = self.bilstm(ctx_seq)                     # (B, T, 256)
+        temporal_gru = self.bigru(ctx_seq)                       # (B, T, 256)
         gate_in = torch.cat([temporal_lstm.mean(dim=1), temporal_gru.mean(dim=1)], dim=-1)
-        lstm_weight = torch.sigmoid(self.temporal_gate(gate_in)).unsqueeze(1)  # (B, 1, 1)
+        lstm_weight = torch.sigmoid(self.temporal_gate(gate_in)).unsqueeze(1)
         temporal = lstm_weight * temporal_lstm + (1.0 - lstm_weight) * temporal_gru
-        context_seq = self.transformer(temporal)  # (B, T/2, 256)
-        deep_context = self.pool_context(context_seq)  # (B, 256)
+        deep_context = self.pool_context(temporal)               # (B, 256)
 
         # Raw macro+sentiment features at the most recent bar in the window
         raw_macro_sentiment = x[:, -1, DATA_CFG.n_technical_features:]  # (B, 18)
@@ -282,33 +221,25 @@ class HybridCNNLSTMTransformer(nn.Module):
 
         if xgb_pred is None:
             xgb_pred = torch.zeros(x.size(0), MODEL_CFG.horizon, device=x.device, dtype=x.dtype)
-        # Context branch sees a normalised, dropout-regularised view;
-        # the residual anchor below uses the raw prediction untouched.
         xgb_normed = self.xgb_input_dropout(self.xgb_input_norm(xgb_pred))
-        xgb_embed_raw = self.xgb_embed(xgb_normed)  # (B, xgb_embed_dim)
+        xgb_embed_raw = self.xgb_embed(xgb_normed)               # (B, 32)
 
-        # Regime-driven trust: volatility context decides the expert blend
-        # (quiet -> trees, turbulent -> deep pathway), per horizon.
         xgb_trust = torch.sigmoid(self.xgb_trust_gate(regime_ctx))  # (B, k)
-        # Scale the context embedding by the mean trust across horizons
-        # (the embedding is a single vector, not per-horizon).
         xgb_embed = xgb_embed_raw * xgb_trust.mean(dim=-1, keepdim=True)
 
-        context = torch.cat([deep_context, skip, xgb_embed], dim=-1)  # (B, 256+32+32=320)
-        deep_forecast, gate, band = self.regime_output(context, regime_ctx)
-        # Two-expert convex blend: the learned per-sample gate arbitrates
-        # between the frozen tree ensemble and the deep forecaster. The
-        # deep expert is additionally trained under its own loss term
-        # (deep supervision, training/train.py), so it cannot collapse to
-        # zero the way the residual-correction formulation did.
+        context = torch.cat([deep_context, skip, xgb_embed], dim=-1)  # (B, 320)
+        deep_forecast, gate, band, log_var = self.regime_output(context, regime_ctx)
+        # Two-expert convex blend (deep supervision keeps the deep expert
+        # a complete forecaster; see training/train.py).
         forecast = xgb_trust * xgb_pred + (1.0 - xgb_trust) * deep_forecast
-        direction_logits = self.direction_head(context)  # (B, k), raw logits for P(return > 0)
+        direction_logits = self.direction_head(context)
         return {
             "forecast": forecast,
-            "deep_forecast": deep_forecast,  # deep expert alone, for the deep-supervision loss
+            "deep_forecast": deep_forecast,
+            "band": band,
+            "log_var": log_var,
             "gate": gate,
             "xgb_trust": xgb_trust,
-            "band": band,
             "context": context,
             "direction_logits": direction_logits,
         }

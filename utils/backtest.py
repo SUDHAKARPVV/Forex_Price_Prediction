@@ -30,6 +30,7 @@ def conviction_backtest(
     tau: float,
     cost_bps: float = 2.0,
     mode: str = "follow",
+    conviction: "np.ndarray" = None,
 ) -> dict:
     """Simulate the abstention-gated strategy. `mode` is the
     validation-calibrated trade direction: "follow" trades with the
@@ -38,7 +39,8 @@ def conviction_backtest(
     equity curves (for charting)."""
     dates = pd.DatetimeIndex(dates)
     direction = 1.0 if mode == "follow" else -1.0
-    position = np.where(np.abs(y_pred_h1) >= tau, direction * np.sign(y_pred_h1), 0.0)
+    conf = conviction if conviction is not None else np.abs(y_pred_h1)
+    position = np.where(conf >= tau, direction * np.sign(y_pred_h1), 0.0)
     gross = position * y_true_h1
     trades = np.abs(np.diff(np.r_[0.0, position]))  # each unit change = one transaction
     costs = trades * cost_bps * 1e-4
