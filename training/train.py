@@ -161,7 +161,10 @@ def train_model(
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=TRAIN_CFG.weight_decay)
+    # Only optimise trainable params -- respects a frozen quant tower in
+    # stage 2 of freeze-and-tune training (models/hybrid_model.py).
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable, lr=lr, weight_decay=TRAIN_CFG.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
 
     def loss_fn(pred, direction_logits, target, deep_forecast=None, log_var=None):
@@ -267,4 +270,50 @@ def train_model(
                 break
 
     model.load_state_dict(best_state)
+    return model, history
+
+
+def train_two_stage(model, train_ds_full, val_ds_full, train_ds_text, val_ds_text,
+                    epochs, lr, device="cpu", seed=None, **kw):
+    """Freeze-and-tune (Fix 2): two-stage training.
+
+    Stage 1 -- train the QUANTITATIVE pipeline text-free on the FULL
+    dataset (model.text_enabled = False, so the text tower is bypassed and
+    its 17 news-less historical years cannot dilute the quant weights).
+
+    Stage 2 -- freeze the quant tower, enable the text tower, and fine-tune
+    the text + fusion + decoder path at a reduced LR on the NEWS-DENSE
+    recent subset (train_ds_text / val_ds_text), so the sentiment pathway
+    is learned only where headlines actually exist.
+
+    Falls back to single-stage train_model if the text subset is too small.
+    """
+    stage2_epochs = max(2, int(epochs * TRAIN_CFG.two_stage_stage2_frac))
+    stage1_epochs = max(2, epochs - stage2_epochs)
+
+    if train_ds_text is None or len(train_ds_text) < TRAIN_CFG.batch_size * 2:
+        print("[two-stage] text-dense subset too small -- falling back to single-stage training")
+        return train_model(model, train_ds_full, val_ds_full, epochs=epochs, lr=lr,
+                           device=device, seed=seed, **kw)
+
+    print(f"[two-stage] Stage 1: quant-only, text bypassed, {stage1_epochs} epochs, full history "
+          f"(train={len(train_ds_full)})")
+    model.set_text_enabled(False)
+    model.freeze_quant_tower(False)
+    model, hist1 = train_model(model, train_ds_full, val_ds_full, epochs=stage1_epochs,
+                               lr=lr, device=device, seed=seed, **kw)
+
+    frozen = model.freeze_quant_tower(True)
+    model.set_text_enabled(True)
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"[two-stage] Stage 2: text+fusion+decoder fine-tune, {stage2_epochs} epochs, "
+          f"news-dense subset (train={len(train_ds_text)}); froze {frozen:,} quant params, "
+          f"{trainable:,} trainable")
+    model, hist2 = train_model(model, train_ds_text, val_ds_text, epochs=stage2_epochs,
+                               lr=lr * TRAIN_CFG.two_stage_stage2_lr_mult, device=device,
+                               seed=(seed + 100) if seed is not None else None, **kw)
+
+    model.freeze_quant_tower(False)  # leave everything trainable for downstream use
+    history = {k: hist1.get(k, []) + hist2.get(k, []) for k in ("train_loss", "val_loss", "val_dir_acc")}
+    history["stage1_epochs"] = len(hist1["train_loss"])
     return model, history

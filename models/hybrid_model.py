@@ -60,8 +60,24 @@ from models.regime_aware import RegimeAwareOutputLayer
 
 
 class HybridCNNLSTMTransformer(nn.Module):
+    # Sub-module name prefixes that make up the QUANTITATIVE pipeline (the
+    # part frozen in stage 2 of freeze-and-tune training). Everything not
+    # listed here -- the text tower, cross-attention fusion, gates, and the
+    # decoder -- stays trainable in stage 2 so the newly-activated text
+    # signal can actually reach the forecast.
+    QUANT_MODULES = (
+        "quant_proj", "cnn", "regime_embed", "to_dmodel", "transformer",
+        "bilstm", "bigru", "temporal_gate", "pool_attn", "context_combine",
+    )
+    TEXT_MODULES = ("text_gru", "text_proj", "cross_attn", "text_gate", "attn_norm")
+
     def __init__(self):
         super().__init__()
+        # When False (stage 1 of freeze-and-tune), the text tower is
+        # bypassed entirely: the quant features pass through unchanged, so
+        # the quantitative pipeline trains text-free across the full 25.9
+        # years without empty-history text diluting it.
+        self.text_enabled = True
         n_quant = DATA_CFG.n_technical_features + DATA_CFG.n_macro_features   # 18
         n_text = DATA_CFG.n_sentiment_features                                # 12
         d_local = MODEL_CFG.cnn_out_channels                                  # 128
@@ -196,14 +212,17 @@ class HybridCNNLSTMTransformer(nn.Module):
         regime_embed = self.regime_embed(regime_ctx)             # (B, 128)
         local = local + regime_embed.unsqueeze(1)
 
-        # Tower B: text engine
-        text_seq, _ = self.text_gru(text)                        # (B, T, 64)
-        text_kv = self.text_proj(text_seq)                       # (B, T, 128)
-
-        # Fusion node: cross-attention with presence-gated residual
-        attn_out, _ = self.cross_attn(local, text_kv, text_kv)   # (B, T, 128)
-        presence = torch.sigmoid(self.text_gate(text))           # (B, T, 1)
-        fused = self.attn_norm(local + presence * attn_out)      # (B, T, 128)
+        if self.text_enabled:
+            # Tower B: text engine
+            text_seq, _ = self.text_gru(text)                    # (B, T, 64)
+            text_kv = self.text_proj(text_seq)                   # (B, T, 128)
+            # Fusion node: cross-attention with presence-gated residual
+            attn_out, _ = self.cross_attn(local, text_kv, text_kv)  # (B, T, 128)
+            presence = torch.sigmoid(self.text_gate(text))       # (B, T, 1)
+            fused = self.attn_norm(local + presence * attn_out)  # (B, T, 128)
+        else:
+            # Stage 1: text tower bypassed -- quant features pass through.
+            fused = self.attn_norm(local)
 
         # Global stage: attention over full-resolution bars, then smoothing
         seq = self.to_dmodel(fused)                              # (B, T, 256)
@@ -243,6 +262,25 @@ class HybridCNNLSTMTransformer(nn.Module):
             "context": context,
             "direction_logits": direction_logits,
         }
+
+    def freeze_quant_tower(self, freeze: bool = True):
+        """Freeze (or unfreeze) the quantitative pipeline for stage 2 of
+        freeze-and-tune training. Returns the number of parameters frozen."""
+        frozen = 0
+        for name in self.QUANT_MODULES:
+            module = getattr(self, name)
+            if isinstance(module, nn.Module):
+                for p in module.parameters():
+                    p.requires_grad = not freeze
+                    frozen += p.numel()
+            else:  # bare nn.Parameter or Linear attribute
+                for p in module.parameters():
+                    p.requires_grad = not freeze
+                    frozen += p.numel()
+        return frozen
+
+    def set_text_enabled(self, enabled: bool):
+        self.text_enabled = enabled
 
     def count_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)

@@ -134,11 +134,14 @@ def run(
             mask |= panel.features[origins, names.index("headline_count_z")] > 0.5
         if "days_since_cpi" in names:
             mask |= panel.features[origins, names.index("days_since_cpi")] < (3 / 60)
-        # NFP release days: US non-farm payrolls come out on the first
-        # Friday of each month -- an exact calendar rule, no data needed.
+        # Scheduled-event calendar: NFP (first Friday) + FOMC decision days
+        # and their next session (utils/event_calendar.py). Sharpens the
+        # event analysis beyond news-burst/CPI recency.
         import pandas as _pd
+
+        from utils.event_calendar import scheduled_event_mask
         origin_dates = _pd.DatetimeIndex([panel.dates[t] for t in origins])
-        mask |= ((origin_dates.dayofweek == 4) & (origin_dates.day <= 7))
+        mask |= scheduled_event_mask(origin_dates)
         if not mask.any():
             return None
         ev = summarize(y_true[mask], y_pred[mask])
@@ -177,7 +180,17 @@ def run(
     # a small single-layer LSTM to train stably -- standard practice, not a
     # thumb on the comparison scale (the simpler baselines are still tuned
     # at their own sensible default of TRAIN_CFG.lr).
-    hybrid, hist = train_model(hybrid, train_ds_xgb, val_ds_xgb, epochs=epochs, lr=TRAIN_CFG.lr * 0.5, device=device, classification_weight=classification_weight, seed=seed)
+    if TRAIN_CFG.two_stage and source == "real":
+        from training.train import train_two_stage
+        train_text = _text_dense_subset(train_ds_xgb, panel, TRAIN_CFG.two_stage_text_from)
+        val_text = _text_dense_subset(val_ds_xgb, panel, TRAIN_CFG.two_stage_text_from)
+        hybrid, hist = train_two_stage(
+            hybrid, train_ds_xgb, val_ds_xgb, train_text, val_text,
+            epochs=epochs, lr=TRAIN_CFG.lr * 0.5, device=device,
+            classification_weight=classification_weight, seed=seed,
+        )
+    else:
+        hybrid, hist = train_model(hybrid, train_ds_xgb, val_ds_xgb, epochs=epochs, lr=TRAIN_CFG.lr * 0.5, device=device, classification_weight=classification_weight, seed=seed)
     reports["Hybrid_CNN_LSTM_Transformer"], y_true, y_pred, test_band = evaluate_deep_model(hybrid, test_ds_xgb, "Hybrid_CNN_LSTM_Transformer", device=device)
     record_price_predictions("Hybrid_CNN_LSTM_Transformer", y_true, y_pred)
     export_predictions_csv("Hybrid_CNN_LSTM_Transformer", y_true, y_pred)
@@ -269,6 +282,22 @@ def run(
     print(f"Human-readable report written to {html_path}  (charts also saved under {report_dir}/charts/)")
 
     return reports
+
+
+def _text_dense_subset(dataset, panel, from_date):
+    """Build a Subset of `dataset` restricted to forecast origins on/after
+    `from_date` -- the news-dense era used for stage 2 of freeze-and-tune
+    training (see training/train.py:train_two_stage). Returns None if the
+    dataset exposes no origin index."""
+    from torch.utils.data import Subset
+
+    origins = getattr(dataset, "indices", None)
+    if origins is None:
+        return None
+    threshold = np.datetime64(from_date)
+    keep = [i for i, t in enumerate(origins)
+            if np.datetime64(panel.dates[t]) >= threshold]
+    return Subset(dataset, keep) if keep else None
 
 
 def xgb_feature_importance_audit(xgb_model, feature_names):

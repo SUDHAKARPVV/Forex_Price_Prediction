@@ -60,6 +60,61 @@ def build_seed_ensemble(seeds, model="Hybrid_CNN_LSTM_Transformer"):
     return summarize(base, mean_pred), len(base)
 
 
+def build_consensus_filter(seeds, model="Hybrid_CNN_LSTM_Transformer", cost_bps=2.0):
+    """Fix 4 -- inter-model consensus (committee-vote) filtering.
+
+    The per-seed backtests swung wildly (+19% vs -17%), so instead of
+    trusting any single seed's directional call, only trade the 1-step
+    forecast when ALL seeds agree on its sign AND their mutual dispersion
+    is low (below the median across the test window -- the seeds are
+    confident AND concordant). Days where the committee disagrees are
+    abstained. Reports consensus directional accuracy and a costed
+    backtest on the agreed direction. Returns a dict or None.
+    """
+    import os
+
+    import pandas as pd
+
+    from utils.backtest import conviction_backtest
+
+    frames = []
+    for s in seeds:
+        path = f"exports/predictions_test_{model}_seed{s}.csv"
+        if not os.path.exists(path):
+            return None
+        frames.append(pd.read_csv(path))
+    h1_preds = np.stack([f["pred_h1"].values for f in frames], axis=1)  # (N, n_seeds)
+    actual_h1 = frames[0]["actual_h1"].values
+    dates = frames[0]["origin"].values
+
+    signs = np.sign(h1_preds)
+    unanimous = np.all(signs == signs[:, :1], axis=1)          # all seeds same sign
+    dispersion = h1_preds.std(axis=1)                          # mutual disagreement
+    low_disp = dispersion <= np.median(dispersion)
+    trade = unanimous & low_disp
+    if trade.sum() < 5:
+        return None
+
+    consensus_dir = signs[:, 0]                                # the agreed sign
+    hit = (np.sign(actual_h1) == consensus_dir)
+    mean_pred = h1_preds.mean(axis=1)
+
+    # Costed backtest: unanimous+low-dispersion days only, follow the vote.
+    tau = 0.0  # gating is the consensus mask itself; pass |pred| >= 0
+    conv = np.where(trade, np.abs(mean_pred) + 1.0, 0.0)       # forces flat off-consensus
+    bt = conviction_backtest(actual_h1, mean_pred, dates, tau=tau, mode="follow",
+                             cost_bps=cost_bps, conviction=conv)
+    return {
+        "n_test_bars": int(len(actual_h1)),
+        "n_unanimous": int(unanimous.sum()),
+        "n_traded": int(trade.sum()),
+        "trade_coverage": float(trade.mean()),
+        "consensus_diracc": float(hit[trade].mean()),
+        "unfiltered_diracc": float((np.sign(actual_h1) == np.sign(mean_pred)).mean()),
+        "backtest": bt,
+    }
+
+
 def multi_seed_evaluation(seeds, **run_kwargs):
     all_runs = []
     for seed in seeds:
@@ -121,6 +176,14 @@ def multi_seed_evaluation(seeds, **run_kwargs):
     roadmap["feature_importance"] = (
         all_runs[0][hybrid_key].get("xgb_feature_importance") if hybrid_key in all_runs[0] else None
     )
+
+    consensus = build_consensus_filter(seeds)
+    roadmap["consensus"] = consensus
+    if consensus:
+        print(f"[consensus] committee-vote filter: trade {consensus['n_traded']}/{consensus['n_test_bars']} "
+              f"bars ({consensus['trade_coverage']*100:.0f}%), DirAcc {consensus['consensus_diracc']:.3f} "
+              f"vs {consensus['unfiltered_diracc']:.3f} unfiltered; backtest "
+              f"{consensus['backtest']['total_return_pct']:+.1f}% net (Sharpe {consensus['backtest']['annualised_sharpe']:.2f})")
 
     with open("roadmap_summary.json", "w") as f:
         json.dump(roadmap, f, indent=2, default=float)

@@ -102,6 +102,17 @@ class TrainConfig:
     # mode of the residual-fusion iteration, where the blended output's
     # loss alone was minimised by ignoring the deep pathway entirely.
     deep_supervision_weight: float = 0.5
+    # Freeze-and-tune (two-stage) training. Stage 1 trains the quantitative
+    # pipeline text-free across the FULL history; stage 2 freezes it and
+    # fine-tunes the text tower + fusion gates + decoder only on the
+    # news-dense recent subset (origins on/after two_stage_text_from), at a
+    # reduced learning rate. Prevents 17 news-less years from diluting the
+    # sentiment pathway. Set two_stage=False to restore single-stage
+    # (modality-masking-only) training.
+    two_stage: bool = True
+    two_stage_text_from: str = "2018-01-01"
+    two_stage_stage2_frac: float = 0.4   # fraction of the epoch budget spent in stage 2
+    two_stage_stage2_lr_mult: float = 0.1  # stage-2 LR relative to stage-1
     # The auxiliary direction-classification BCE loss (see training/train.py:total_loss)
     # was tested at weight 0.4-0.5 and found to make things WORSE on a ~990-window
     # training set: it overfits faster than the regression task and drags the whole
