@@ -180,7 +180,7 @@ def run(
     # a small single-layer LSTM to train stably -- standard practice, not a
     # thumb on the comparison scale (the simpler baselines are still tuned
     # at their own sensible default of TRAIN_CFG.lr).
-    if TRAIN_CFG.two_stage and source == "real":
+    if TRAIN_CFG.two_stage and source in ("real", "panel"):
         from training.train import train_two_stage
         train_text = _text_dense_subset(train_ds_xgb, panel, TRAIN_CFG.two_stage_text_from)
         val_text = _text_dense_subset(val_ds_xgb, panel, TRAIN_CFG.two_stage_text_from)
@@ -398,7 +398,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--quick", action="store_true", help="fast smoke test")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--source", type=str, default="synthetic", choices=["synthetic", "real"],
+    parser.add_argument("--source", type=str, default="synthetic", choices=["synthetic", "real", "panel"],
                          help="'real' tries live Yahoo Finance + FXStreet/Investing.com feeds, falling back to synthetic if unreachable")
     parser.add_argument("--signal_strength", type=float, default=None,
                          help="Synthetic-mode only: strength of the injected causal sentiment/macro -> return signal. 0.0 = pure noise ablation.")

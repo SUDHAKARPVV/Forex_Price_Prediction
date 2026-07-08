@@ -201,7 +201,10 @@ if __name__ == "__main__":
                              "FULL listed history (GC=F reaches back to 2000), so the default "
                              "no longer caps at 5,000.")
     parser.add_argument("--epochs", type=int, default=30)
-    parser.add_argument("--source", type=str, default="real", choices=["synthetic", "real"])
+    parser.add_argument("--source", type=str, default="panel", choices=["synthetic", "real", "panel"],
+                        help="'panel' (default): train on the pre-built exports/feature_panel.csv "
+                             "from PIPELINE 1 (build_dataset.py) -- no live fetching. 'real': fetch "
+                             "live inside the run (slow/fragile). 'synthetic': generated data.")
     parser.add_argument("--interval", type=str, default="1d",
                         help="'1d' daily bars (default: full 25-year history, natural alignment "
                              "with the daily/monthly macro cadence -- the hourly round showed "

@@ -656,15 +656,27 @@ def try_fetch_real_panel(ticker_symbol: str = "GC=F", interval: str = "5m", coun
         # published, so sparse coverage still populates most bars -- no
         # look-ahead (only news strictly before the bar is used).
         align_hours = 120.0
-    fresh = fetch_all_news(gdelt_days=gdelt_days, gdelt_window_days=gdelt_window)
+    # PREFER the offline archive. GDELT's free tier rate-limits any single
+    # live run into month-sized coverage holes, so the dense history is
+    # built ONCE by build_news_archive.py (patient, resumable) into
+    # exports/archive/news_<ticker>.csv. Here we (a) load that archive if
+    # present, (b) do only a LIGHT live top-up of the most recent ~30 days
+    # for freshness (not a full 5-year fetch), and (c) align the union to
+    # bars. If no archive exists yet, fall back to a full live fetch.
+    import os as _os
 
-    # Persistent news archive: merge this run's (rate-limited, partial)
-    # fetch into a per-ticker archive on disk and align the FULL archive to
-    # bars. GDELT's free tier drops ~half the monthly windows per run to
-    # rate limits, so coverage is patchy in any single run; accumulating
-    # across runs fills the month-sized holes over time (same idea as the
-    # price archive, applied to news).
-    news = _grow_news_archive(fresh, ticker_symbol)
+    safe = ticker_symbol.replace("=", "").replace("^", "").replace("-", "").replace(".", "")
+    archive_path = _os.path.join("exports", "archive", f"news_{safe}.csv")
+    if _os.path.exists(archive_path):
+        print(f"[real_data_feed] using offline news archive {archive_path} "
+              "(+ light recent top-up); run build_news_archive.py to deepen it.")
+        top_up = fetch_all_news(gdelt_days=30, gdelt_window_days=15)
+        news = _grow_news_archive(top_up, ticker_symbol)  # merges top-up INTO the archive, returns full
+    else:
+        print("[real_data_feed] no news archive found -- doing a full live fetch "
+              "(slow, rate-limited; build_news_archive.py is the reliable path).")
+        fresh = fetch_all_news(gdelt_days=gdelt_days, gdelt_window_days=gdelt_window)
+        news = _grow_news_archive(fresh, ticker_symbol)
     news_aligned = align_news_to_bars(ohlc.index, news, window_hours=align_hours)
 
     # Real macro stream (Yahoo rates/DXY + BLS CPI); None -> synthetic fallback.

@@ -185,15 +185,22 @@ def build_fx_panel(
     real_ticker: str = None,
     real_interval: str = "1d",
     real_count: int = None,
+    panel_csv: str = "exports/feature_panel.csv",
 ) -> FXPanel:
     """Assemble the full multi-modal panel for one currency pair.
 
-    source="real": tries live Yahoo Finance / GDELT / RSS feeds first; on
-    any failure (as will happen in a network-restricted sandbox), prints a
-    clear warning and falls back to the signal-linked synthetic generator
-    so the pipeline always returns something runnable. `real_count`
-    defaults to `n_days`, so `--n_days 5000` requests 5,000 live candles.
+    source="panel": load a pre-built, verified feature panel from
+        `panel_csv` (produced by the data pipeline, build_dataset.py). This
+        is the model pipeline's input -- no live fetching, so training is
+        fast, deterministic, and only ever sees data you have already
+        inspected in the exported CSVs.
+    source="real": live Yahoo Finance / GDELT-archive / macro feeds, with a
+        synthetic fallback if unreachable.
+    source="synthetic": the signal-linked synthetic generator.
     """
+    if source == "panel":
+        return load_panel_csv(panel_csv)
+
     if source == "real":
         real_ticker = real_ticker or PAIR_TICKERS.get(pair, "GC=F")
         real_count = real_count or n_days
@@ -288,6 +295,52 @@ class FXWindowDataset(Dataset):
             torch.from_numpy(y.astype(np.float32)),
             torch.from_numpy(regime_ctx),
         )
+
+
+def save_panel_csv(panel: FXPanel, path: str = "exports/feature_panel.csv") -> str:
+    """Serialise a built FXPanel to a single CSV -- the hand-off artifact
+    between the DATA pipeline (build_dataset.py) and the MODEL pipeline.
+    Columns: date index, close, realized_vol, atr, then the 30 RAW
+    (un-normalised) engineered features. Normalisation happens later in
+    time_split, so the saved panel is the inspectable raw feature set.
+    """
+    import os
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    df = pd.DataFrame(panel.features, columns=panel.feature_names,
+                      index=pd.DatetimeIndex(panel.dates))
+    df.insert(0, "close", panel.close)
+    df.insert(1, "realized_vol", panel.realized_vol)
+    df.insert(2, "atr", panel.atr)
+    df.index.name = "date"
+    df.to_csv(path)
+    return path
+
+
+def load_panel_csv(path: str = "exports/feature_panel.csv") -> FXPanel:
+    """Load a feature panel saved by save_panel_csv back into an FXPanel."""
+    import os
+
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Feature panel not found at {path}. Run the DATA pipeline first: "
+            f"python build_dataset.py"
+        )
+    df = pd.read_csv(path, index_col=0, parse_dates=True)
+    meta_cols = ["close", "realized_vol", "atr"]
+    feat_cols = [c for c in df.columns if c not in meta_cols]
+    assert len(feat_cols) == DATA_CFG.n_total_features, (
+        f"panel CSV has {len(feat_cols)} feature columns, expected {DATA_CFG.n_total_features}"
+    )
+    return FXPanel(
+        features=df[feat_cols].values.astype(np.float32),
+        close=df["close"].values.astype(np.float32),
+        realized_vol=df["realized_vol"].values.astype(np.float32),
+        atr=df["atr"].values.astype(np.float32),
+        dates=df.index,
+        feature_names=feat_cols,
+        source="real",
+    )
 
 
 def time_split(panel: FXPanel):
