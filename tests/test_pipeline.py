@@ -44,6 +44,15 @@ from utils.report import generate_report, build_markdown_table, build_narrative
 from utils.price_reconstruction import reconstruct_prices, get_price_level_series
 
 
+_N_QUANT = DATA_CFG.n_technical_features + DATA_CFG.n_macro_features  # 18
+
+
+def _split_x(x):
+    """(B, T, 30) fused -> (x_quant (B,T,18), x_text (B,T,12)) as the
+    dual-tower DataLoader now delivers them."""
+    return x[:, :, :_N_QUANT], x[:, :, _N_QUANT:]
+
+
 def test_synthetic_data_shapes():
     ohlc = generate_ohlc(n_days=200, seed=1)
     assert ohlc.shape == (200, 6)  # open, high, low, close, volume, true_regime
@@ -116,8 +125,9 @@ def test_fx_panel_and_windowing():
 
     ds = FXWindowDataset(panel)
     assert len(ds) > 0
-    x, y, regime_ctx = ds[0]
-    assert x.shape == (DATA_CFG.lookback, DATA_CFG.n_total_features)
+    x_quant, x_text, y, regime_ctx = ds[0]
+    assert x_quant.shape == (DATA_CFG.lookback, DATA_CFG.n_technical_features + DATA_CFG.n_macro_features)
+    assert x_text.shape == (DATA_CFG.lookback, DATA_CFG.n_sentiment_features)
     assert y.shape == (DATA_CFG.horizon,)
     assert regime_ctx.shape == (2,)
 
@@ -354,7 +364,7 @@ def test_hybrid_model_end_to_end_forward():
 
     x = torch.randn(4, DATA_CFG.lookback, DATA_CFG.n_total_features)
     regime_ctx = torch.randn(4, 2)
-    out = m(x, regime_ctx)
+    out = m(*_split_x(x), regime_ctx)
     assert out["forecast"].shape == (4, DATA_CFG.horizon)
     assert out["direction_logits"].shape == (4, DATA_CFG.horizon)
     assert out["xgb_trust"].shape == (4, DATA_CFG.horizon)  # per-horizon blend gate
@@ -374,12 +384,12 @@ def test_baseline_models_forward():
     regime_ctx = torch.randn(4, 2)
 
     vlstm = VanillaLSTM()
-    out = vlstm(x, regime_ctx)
+    out = vlstm(*_split_x(x), regime_ctx)
     assert out["forecast"].shape == (4, DATA_CFG.horizon)
     assert out["direction_logits"].shape == (4, DATA_CFG.horizon)
 
     tft = SimplifiedTFT()
-    out = tft(x, regime_ctx)
+    out = tft(*_split_x(x), regime_ctx)
     assert out["forecast"].shape == (4, DATA_CFG.horizon)
     assert out["direction_logits"].shape == (4, DATA_CFG.horizon)
     print("[PASS] baseline models forward pass (forecast + direction_logits)")
@@ -454,7 +464,8 @@ def test_xgboost_baseline():
     panel = build_fx_panel(pair="XAU/USD", n_days=400, seed=1, source="synthetic")
     train_ds, val_ds, test_ds = time_split(panel)
 
-    x_sample, _, regime_sample = train_ds[0]
+    x_quant_s, x_text_s, _, regime_sample = train_ds[0]
+    x_sample = torch.cat([x_quant_s, x_text_s], dim=-1)  # re-fuse for the tabular summary
     summary = summarize_window(x_sample.numpy())
     assert summary.shape == (3 * DATA_CFG.n_total_features,)
 
@@ -488,15 +499,18 @@ def test_xgb_augmented_dataset():
     assert aug.panel is test_ds.panel      # passthrough property (note: time_split() builds a
                                             # normalised FXPanel distinct from the raw `panel` object)
 
-    x, y, regime_ctx, xgb_pred = aug[0]
-    assert x.shape == (DATA_CFG.lookback, DATA_CFG.n_total_features)
+    x_quant, x_text, y, regime_ctx, xgb_pred = aug[0]
+    assert x_quant.shape == (DATA_CFG.lookback, DATA_CFG.n_technical_features + DATA_CFG.n_macro_features)
+    assert x_text.shape == (DATA_CFG.lookback, DATA_CFG.n_sentiment_features)
     assert y.shape == (DATA_CFG.horizon,)
     assert regime_ctx.shape == (2,)
     assert xgb_pred.shape == (DATA_CFG.horizon,)
     assert torch.isfinite(xgb_pred).all()
 
-    # Precomputed prediction should exactly match a direct XGBoost call on the same window
-    direct_pred = xgb.predict_batch(x.numpy()[None, ...], regime_ctx.numpy()[None, ...])[0]
+    # Precomputed prediction should exactly match a direct XGBoost call on
+    # the same window (re-fused from the two modality tensors).
+    x_full = torch.cat([x_quant, x_text], dim=-1)
+    direct_pred = xgb.predict_batch(x_full.numpy()[None, ...], regime_ctx.numpy()[None, ...])[0]
     assert np.allclose(xgb_pred.numpy(), direct_pred, atol=1e-4)
     print("[PASS] XGBAugmentedDataset (precomputed predictions match direct XGBoost calls)")
 
@@ -521,9 +535,10 @@ def test_hybrid_xgb_fusion():
     torch.manual_seed(2)
     xgb_b = torch.randn(4, DATA_CFG.horizon) * 0.02
 
+    xq, xt = _split_x(x)
     with torch.no_grad():
-        out_a = m(x, regime_ctx, xgb_a)
-        out_b = m(x, regime_ctx, xgb_b)
+        out_a = m(xq, xt, regime_ctx, xgb_a)
+        out_b = m(xq, xt, regime_ctx, xgb_b)
 
     assert not torch.allclose(out_a["forecast"], out_b["forecast"]), \
         "changing xgb_pred should change the forecast -- the fusion branch appears to be a no-op"
@@ -539,7 +554,7 @@ def test_hybrid_xgb_fusion():
     for head in (m.regime_output.stable_head, m.regime_output.high_vol_head):
         torch.nn.init.normal_(head.net[-1].weight, std=0.05)
     torch.nn.init.normal_(m.xgb_trust_gate.weight, std=0.05)
-    out = m(x, regime_ctx, xgb_b)
+    out = m(xq, xt, regime_ctx, xgb_b)
     loss = out["forecast"].sum()
     loss.backward()
     assert m.xgb_embed[0].weight.grad is not None and m.xgb_embed[0].weight.grad.abs().sum() > 0
@@ -564,8 +579,9 @@ def test_hybrid_residual_anchor_and_signal_conditioning():
     regime_ctx = torch.randn(4, 2)
     xgb_pred = torch.randn(4, DATA_CFG.horizon) * 0.02
 
+    xq, xt = _split_x(x)
     with torch.no_grad():
-        out = m(x, regime_ctx, xgb_pred)
+        out = m(xq, xt, regime_ctx, xgb_pred)
     assert torch.allclose(out["deep_forecast"], torch.zeros(4, DATA_CFG.horizon), atol=1e-6), \
         "fresh deep expert must start at zero: zero-init of decoder heads broken?"
     assert torch.allclose(out["xgb_trust"], torch.full((4, DATA_CFG.horizon), 0.5)), \
@@ -580,13 +596,15 @@ def test_hybrid_residual_anchor_and_signal_conditioning():
     # nudge them away from the zero init first.
     for head in (m.regime_output.stable_head, m.regime_output.high_vol_head):
         torch.nn.init.normal_(head.net[-1].weight, std=0.05)
-    x_flipped = x.clone()
-    x_flipped[:, -1, -DATA_CFG.n_signal_classes:] = torch.tensor([1.0, 0.0, 0.0, 0.0])
-    x_flipped2 = x.clone()
-    x_flipped2[:, -1, -DATA_CFG.n_signal_classes:] = torch.tensor([0.0, 1.0, 0.0, 0.0])
+    # The buy/sell/hold/none signal is the last n_signal_classes columns of
+    # the TEXT tensor now (sentiment stream).
+    xt_buy = xt.clone()
+    xt_buy[:, -1, -DATA_CFG.n_signal_classes:] = torch.tensor([1.0, 0.0, 0.0, 0.0])
+    xt_sell = xt.clone()
+    xt_sell[:, -1, -DATA_CFG.n_signal_classes:] = torch.tensor([0.0, 1.0, 0.0, 0.0])
     with torch.no_grad():
-        out_buy = m(x_flipped, regime_ctx, xgb_pred)
-        out_sell = m(x_flipped2, regime_ctx, xgb_pred)
+        out_buy = m(xq, xt_buy, regime_ctx, xgb_pred)
+        out_sell = m(xq, xt_sell, regime_ctx, xgb_pred)
     assert not torch.allclose(out_buy["forecast"], out_sell["forecast"]), \
         "buy vs sell signal should produce different forecasts -- signal conditioning appears to be a no-op"
     print("[PASS] residual XGBoost anchor at init + buy/sell/hold/none signal conditioning")
@@ -634,7 +652,8 @@ def test_price_reconstruction():
     _, _, test_ds = time_split(panel)
 
     n = len(test_ds)
-    y_true = np.array([test_ds[i][1].numpy() for i in range(n)])
+    # dataset item is (x_quant, x_text, y, regime_ctx) -- y is index 2
+    y_true = np.array([test_ds[i][2].numpy() for i in range(n)])
     y_pred = y_true.copy()  # perfect predictions -- reconstructed price should exactly match actual
 
     dates, actual, predicted = get_price_level_series(test_ds, y_true, y_pred, panel, horizon_idx=0)

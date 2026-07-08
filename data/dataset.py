@@ -236,13 +236,22 @@ def build_fx_panel(
     return _assemble_panel(ohlc, macro, news, source="synthetic")
 
 
-class FXWindowDataset(Dataset):
-    """Sliding-window dataset producing (X, y, regime_context) tuples.
+# The dual-tower architecture (models/hybrid_model.py) consumes the two
+# modalities on SEPARATE input tensors, so the Dataset splits them here
+# rather than fusing into one (T, 30) matrix and slicing inside the
+# network -- the isolated tensors make the tower boundary explicit and
+# keep the quant pathway provably untouched by the text stream.
+N_QUANT_FEATURES = DATA_CFG.n_technical_features + DATA_CFG.n_macro_features  # 18
+N_TEXT_FEATURES = DATA_CFG.n_sentiment_features                              # 12
 
-    X: (T, 26)   input window of fused features
-    y: (k,)      k-step-ahead *log-returns* of close price (multi-horizon target)
-    regime_ctx: (2,) [realised_vol_at_origin, atr_at_origin] used to help
-                supervise / sanity-check the regime detector
+
+class FXWindowDataset(Dataset):
+    """Sliding-window dataset producing (x_quant, x_text, y, regime_ctx) tuples.
+
+    x_quant:    (T, 18)  technical + macro stream  -> Tower A (dilated CNN + recurrent)
+    x_text:     (T, 12)  FinBERT sentiment stream  -> Tower B (GRU + cross-attention)
+    y:          (k,)     k-step-ahead cumulative log-returns of close (target)
+    regime_ctx: (2,)     [realised_vol_at_origin, atr_at_origin]
     """
 
     def __init__(self, panel: FXPanel, lookback: int = None, horizon: int = None, start: int = 0, end: int = None):
@@ -266,13 +275,16 @@ class FXWindowDataset(Dataset):
 
     def __getitem__(self, idx):
         t = self.indices[idx]
-        x = self.panel.features[t - self.lookback + 1 : t + 1]  # (T, 26)
+        x = self.panel.features[t - self.lookback + 1 : t + 1]  # (T, 30)
+        x_quant = x[:, :N_QUANT_FEATURES]                        # (T, 18)
+        x_text = x[:, N_QUANT_FEATURES:]                         # (T, 12)
         future = self._log_close[t + 1 : t + 1 + self.horizon]
         y = future - self._log_close[t]  # cumulative log-return targets, (k,)
         regime_ctx = np.array([self.panel.realized_vol[t], self.panel.atr[t]], dtype=np.float32)
 
         return (
-            torch.from_numpy(x.astype(np.float32)),
+            torch.from_numpy(x_quant.astype(np.float32)),
+            torch.from_numpy(x_text.astype(np.float32)),
             torch.from_numpy(y.astype(np.float32)),
             torch.from_numpy(regime_ctx),
         )

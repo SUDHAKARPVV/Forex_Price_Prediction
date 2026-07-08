@@ -41,15 +41,18 @@ def summarize_window(x: np.ndarray) -> np.ndarray:
 
 
 def build_xgb_feature_matrix(dataset) -> "tuple[np.ndarray, np.ndarray]":
-    """Iterate an FXWindowDataset (or an XGBAugmentedDataset -- the extra
-    xgb_pred element is simply ignored here) and build (X, y) arrays
-    suitable for scikit-learn / XGBoost: X is (N, 3*22 + 2), y is (N, horizon).
+    """Iterate a dataset yielding (x_quant, x_text, y, regime_ctx[, xgb_pred])
+    and build (X, y) arrays for XGBoost. XGBoost is a single tabular expert
+    over the WHOLE feature set, so the two modality tensors are re-fused
+    into the (T, 30) window before summarising: X is (N, 3*30 + 2), y is
+    (N, horizon).
     """
     X, y = [], []
     for i in range(len(dataset)):
         item = dataset[i]
-        x_seq, target, regime_ctx = item[0], item[1], item[2]
-        summary = summarize_window(x_seq.numpy())
+        x_quant, x_text, target, regime_ctx = item[0], item[1], item[2], item[3]
+        x_seq = np.concatenate([x_quant.numpy(), x_text.numpy()], axis=-1)  # (T, 30)
+        summary = summarize_window(x_seq)
         X.append(np.concatenate([summary, regime_ctx.numpy()]))
         y.append(target.numpy())
     return np.array(X), np.array(y)
@@ -60,8 +63,8 @@ class XGBAugmentedDataset:
     the XGBoost prediction for every window ONCE (XGBoost is frozen and
     doesn't change during neural-net training, so recomputing it inside
     every training step would be pure waste), and returning
-    (x, y, regime_ctx, xgb_pred) 4-tuples instead of the base dataset's
-    3-tuples.
+    (x_quant, x_text, y, regime_ctx, xgb_pred) 5-tuples instead of the base
+    dataset's 4-tuples.
 
     This is what makes the integration architectural rather than a
     post-hoc average: `xgb_pred` becomes a genuine input tensor to
@@ -81,9 +84,9 @@ class XGBAugmentedDataset:
         return len(self.base_dataset)
 
     def __getitem__(self, idx):
-        x, y, regime_ctx = self.base_dataset[idx]
+        x_quant, x_text, y, regime_ctx = self.base_dataset[idx]
         xgb_pred = torch.from_numpy(self.xgb_preds[idx])
-        return x, y, regime_ctx, xgb_pred
+        return x_quant, x_text, y, regime_ctx, xgb_pred
 
     @property
     def indices(self):

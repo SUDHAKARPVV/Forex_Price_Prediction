@@ -36,14 +36,14 @@ def collect_predictions(model, dataset, device: str = "cpu"):
     all_true, all_pred, all_logits, all_regime_ctx, all_bands = [], [], [], [], []
     with torch.no_grad():
         for batch in loader:
-            if len(batch) == 4:
-                x, y, regime_ctx, xgb_pred = batch
+            if len(batch) == 5:
+                x_quant, x_text, y, regime_ctx, xgb_pred = batch
                 xgb_pred = xgb_pred.to(device)
             else:
-                x, y, regime_ctx = batch
+                x_quant, x_text, y, regime_ctx = batch
                 xgb_pred = None
-            x, regime_ctx = x.to(device), regime_ctx.to(device)
-            out = model(x, regime_ctx, xgb_pred)
+            x_quant, x_text, regime_ctx = x_quant.to(device), x_text.to(device), regime_ctx.to(device)
+            out = model(x_quant, x_text, regime_ctx, xgb_pred)
             pred = out["forecast"] if isinstance(out, dict) else out
             logits = out.get("direction_logits") if isinstance(out, dict) else None
             band = out.get("band") if isinstance(out, dict) else None

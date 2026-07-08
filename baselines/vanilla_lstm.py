@@ -32,7 +32,10 @@ class VanillaLSTM(nn.Module):
             nn.Linear(64, horizon),
         )
 
-    def forward(self, x: torch.Tensor, regime_ctx: torch.Tensor = None, xgb_pred: torch.Tensor = None) -> dict:
+    def forward(self, x_quant: torch.Tensor, x_text: torch.Tensor = None, regime_ctx: torch.Tensor = None, xgb_pred: torch.Tensor = None) -> dict:
+        # Single-stream baseline: re-fuse the two modality tensors it is
+        # handed by the dual-tower DataLoader into one (B, T, 30) input.
+        x = x_quant if x_text is None else torch.cat([x_quant, x_text], dim=-1)
         out, (h_n, _) = self.lstm(x)
         last_hidden = h_n[-1]  # (B, hidden)
         forecast = self.head(last_hidden)

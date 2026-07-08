@@ -311,6 +311,13 @@ def fetch_all_news(feed_urls=None, gdelt_days: int = 60, gdelt_window_days: int 
         gdelt = fetch_gdelt_news(days=gdelt_days, window_days=gdelt_window_days)
         if not gdelt.empty:
             frames.append(gdelt)
+        # Blind-spot fix: the monthly historical slices index the freshest
+        # days sparsely, leaving a ~1-week gap at the edge of the test set
+        # where every sentiment feature is zero. A dedicated fine-grained
+        # pass over the last 14 days (2-day slices) densely fills that gap.
+        recent = fetch_gdelt_news(days=14, window_days=2)
+        if not recent.empty:
+            frames.append(recent)
     for url in feed_urls:
         f = fetch_fxstreet_feed(url)
         if not f.empty:
@@ -325,32 +332,50 @@ def fetch_all_news(feed_urls=None, gdelt_days: int = 60, gdelt_window_days: int 
     return filter_relevant_news(merged)
 
 
-# Headlines must mention the asset or one of its macro drivers to be worth
-# scoring. The RSS feeds in particular leak unrelated items (single-stock
-# and biotech news was observed in the commodities feed); scoring those
-# with FinBERT injects sentiment that has nothing to do with gold.
-_RELEVANCE_PATTERN = (
-    r"gold|xau|bullion|precious metal|silver|comex"
-    r"|fed(eral reserve)?\b|fomc|rate (cut|hike|decision)|interest rate"
-    r"|inflation|cpi\b|dollar|dxy|treasur|yield|safe.?haven|central bank"
+# STRICT gold relevance (fixes cross-asset contamination): a headline is
+# kept only if it explicitly concerns gold/precious metals OR a core US
+# macro driver of gold (Fed policy, inflation, the dollar index, real
+# yields, safe-haven flows). Generic single-currency FX news -- NZD, AUD,
+# CHF, GBP, JPY, EUR pair forecasts -- was polluting the sentiment stream
+# ("New Zealand Dollar rallies...", "Swiss Franc weakens..."); those are
+# dropped UNLESS the headline also mentions gold.
+_GOLD_PATTERN = r"\bgold\b|xau|bullion|precious metal|comex gold|gold price|spot gold"
+_GOLD_MACRO_PATTERN = (
+    r"federal reserve|\bfomc\b|\bpowell\b|\bfed\b|rate (?:cut|hike|decision)"
+    r"|interest rate decision|\bcpi\b|inflation|\bpce\b|dollar index|\bdxy\b"
+    r"|treasury yield|real yield|safe.?haven"
+)
+# Foreign single-currency / cross-pair chatter that is NOT about gold.
+_FOREIGN_FX_PATTERN = (
+    r"new zealand dollar|australian dollar|canadian dollar|swiss franc"
+    r"|british pound|japanese yen|\beuro\b|\bnzd\b|\baud\b|\bcad\b|\bchf\b"
+    r"|\bgbp\b|\bjpy\b|eur/usd|aud/usd|gbp/usd|usd/jpy|nzd/usd|usd/cad|usd/chf"
+    r"|rbnz|\brba\b|\bboe\b|\bboj\b|\becb\b"
 )
 
 
 def filter_relevant_news(news: pd.DataFrame, min_title_words: int = 4) -> pd.DataFrame:
-    """Drop headlines that are (a) not relevant to gold or its macro
-    drivers, or (b) too short to carry scoreable content. Prints how many
-    were removed so the filtering is visible, and exports nothing here --
-    the kept set flows into exports/news_headlines_scored.csv as usual.
+    """Keep only gold-relevant headlines. A headline passes if it mentions
+    gold/precious metals OR a core gold-macro driver, is long enough to
+    carry content, and is NOT primarily foreign-FX chatter (unless it also
+    names gold). Prints the breakdown so the filtering is auditable.
     """
     if news.empty:
         return news
     text = (news["title"].fillna("") + " " + news["summary"].fillna("")).str.lower()
-    relevant = text.str.contains(_RELEVANCE_PATTERN, regex=True)
+    is_gold = text.str.contains(_GOLD_PATTERN, regex=True)
+    is_gold_macro = text.str.contains(_GOLD_MACRO_PATTERN, regex=True)
+    is_foreign = text.str.contains(_FOREIGN_FX_PATTERN, regex=True)
     long_enough = news["title"].fillna("").str.split().str.len() >= min_title_words
-    kept = news[relevant & long_enough].reset_index(drop=True)
-    dropped = len(news) - len(kept)
-    print(f"[real_data_feed] relevance filter: kept {len(kept)}/{len(news)} headlines "
-          f"({dropped} dropped as off-topic or too short).")
+
+    # Relevant = (gold OR gold-macro) AND long enough AND not foreign-FX-
+    # only. Gold mentions override the foreign-FX exclusion (e.g. "Gold and
+    # the euro both rally" is still about gold).
+    relevant = (is_gold | is_gold_macro) & long_enough & (is_gold | ~is_foreign)
+    kept = news[relevant].reset_index(drop=True)
+    n_foreign = int((is_foreign & ~is_gold).sum())
+    print(f"[real_data_feed] gold relevance filter: kept {len(kept)}/{len(news)} headlines "
+          f"({len(news)-len(kept)} dropped: {n_foreign} foreign-FX/cross-asset, rest off-topic/short).")
     return kept
 
 
@@ -585,7 +610,11 @@ def try_fetch_real_panel(ticker_symbol: str = "GC=F", interval: str = "5m", coun
         align_hours = 6.0
     else:
         gdelt_days, gdelt_window = 1095, 30
-        align_hours = 24.0
+        # Daily bars: a 72h trailing alignment window (vs 24h) lets each bar
+        # inherit the prior few days' gold headlines when a given day had
+        # none published -- smoothing the sparse-news blind spot without any
+        # look-ahead (only news strictly before the bar is used).
+        align_hours = 72.0
     news = fetch_all_news(gdelt_days=gdelt_days, gdelt_window_days=gdelt_window)
     news_aligned = align_news_to_bars(ohlc.index, news, window_hours=align_hours)
 

@@ -43,7 +43,8 @@ class SimplifiedTFT(nn.Module):
         self.head = nn.Sequential(nn.Linear(d_model, 64), nn.ReLU(), nn.Linear(64, horizon))
         self.direction_head = nn.Sequential(nn.Linear(d_model, 64), nn.ReLU(), nn.Linear(64, horizon))
 
-    def forward(self, x: torch.Tensor, regime_ctx: torch.Tensor = None, xgb_pred: torch.Tensor = None) -> dict:
+    def forward(self, x_quant: torch.Tensor, x_text: torch.Tensor = None, regime_ctx: torch.Tensor = None, xgb_pred: torch.Tensor = None) -> dict:
+        x = x_quant if x_text is None else torch.cat([x_quant, x_text], dim=-1)
         h = self.input_proj(x)
         h, _ = self.lstm_encoder(h)
         h = self.grn(h)

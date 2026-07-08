@@ -107,26 +107,25 @@ def gaussian_nll_loss(pred: torch.Tensor, target: torch.Tensor, log_var: torch.T
     return 0.5 * (log_var + z2 * torch.exp(-log_var)).mean()
 
 
-def _forward(model, x, regime_ctx, xgb_pred=None):
+def _forward(model, x_quant, x_text, regime_ctx, xgb_pred=None):
     """All models (hybrid + baselines) return {"forecast", "direction_logits"}.
-    Baselines simply ignore xgb_pred (uniform calling convention); only the
-    Hybrid returns "deep_forecast" (deep-supervision target) and "log_var"
+    Baselines ignore xgb_pred (uniform calling convention); only the Hybrid
+    returns "deep_forecast" (deep-supervision target) and "log_var"
     (probabilistic head -- switches the main loss to Gaussian NLL)."""
-    out = model(x, regime_ctx, xgb_pred)
+    out = model(x_quant, x_text, regime_ctx, xgb_pred)
     return out["forecast"], out.get("direction_logits"), out.get("deep_forecast"), out.get("log_var")
 
 
 def _unpack_batch(batch):
-    """Datasets built with data/dataset.py:FXWindowDataset yield 3-tuples
-    (x, y, regime_ctx); baselines/xgboost_baseline.py:XGBAugmentedDataset
-    yields 4-tuples with a precomputed xgb_pred appended. Handle both so
-    the same training loop works for every model."""
-    if len(batch) == 4:
-        x, y, regime_ctx, xgb_pred = batch
+    """data/dataset.py:FXWindowDataset yields 4-tuples
+    (x_quant, x_text, y, regime_ctx); XGBAugmentedDataset yields 5-tuples
+    with a precomputed xgb_pred appended. Handle both."""
+    if len(batch) == 5:
+        x_quant, x_text, y, regime_ctx, xgb_pred = batch
     else:
-        x, y, regime_ctx = batch
+        x_quant, x_text, y, regime_ctx = batch
         xgb_pred = None
-    return x, y, regime_ctx, xgb_pred
+    return x_quant, x_text, y, regime_ctx, xgb_pred
 
 
 def train_model(
@@ -217,12 +216,12 @@ def train_model(
         model.train()
         train_losses = []
         for batch in train_loader:
-            x, y, regime_ctx, xgb_pred = _unpack_batch(batch)
-            x, y, regime_ctx = x.to(device), y.to(device), regime_ctx.to(device)
+            x_quant, x_text, y, regime_ctx, xgb_pred = _unpack_batch(batch)
+            x_quant, x_text, y, regime_ctx = x_quant.to(device), x_text.to(device), y.to(device), regime_ctx.to(device)
             if xgb_pred is not None:
                 xgb_pred = xgb_pred.to(device)
             optimizer.zero_grad()
-            pred, direction_logits, deep_forecast, log_var = _forward(model, x, regime_ctx, xgb_pred)
+            pred, direction_logits, deep_forecast, log_var = _forward(model, x_quant, x_text, regime_ctx, xgb_pred)
             loss = loss_fn(pred, direction_logits, y, deep_forecast, log_var)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), TRAIN_CFG.grad_clip)
@@ -234,11 +233,11 @@ def train_model(
         sign_hits, sign_total = 0, 0
         with torch.no_grad():
             for batch in val_loader:
-                x, y, regime_ctx, xgb_pred = _unpack_batch(batch)
-                x, y, regime_ctx = x.to(device), y.to(device), regime_ctx.to(device)
+                x_quant, x_text, y, regime_ctx, xgb_pred = _unpack_batch(batch)
+                x_quant, x_text, y, regime_ctx = x_quant.to(device), x_text.to(device), y.to(device), regime_ctx.to(device)
                 if xgb_pred is not None:
                     xgb_pred = xgb_pred.to(device)
-                pred, direction_logits, deep_forecast, log_var = _forward(model, x, regime_ctx, xgb_pred)
+                pred, direction_logits, deep_forecast, log_var = _forward(model, x_quant, x_text, regime_ctx, xgb_pred)
                 val_losses.append(loss_fn(pred, direction_logits, y, deep_forecast, log_var).item())
                 sign_hits += (torch.sign(pred) == torch.sign(y)).sum().item()
                 sign_total += y.numel()

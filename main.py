@@ -384,9 +384,9 @@ def _average_xgb_trust(hybrid_model, test_ds_xgb, device: str = "cpu") -> float:
     hybrid_model.eval()
     trusts = []
     with torch.no_grad():
-        for x, y, regime_ctx, xgb_pred in loader:
-            x, regime_ctx, xgb_pred = x.to(device), regime_ctx.to(device), xgb_pred.to(device)
-            out = hybrid_model(x, regime_ctx, xgb_pred)
+        for x_quant, x_text, y, regime_ctx, xgb_pred in loader:
+            x_quant, x_text, regime_ctx, xgb_pred = x_quant.to(device), x_text.to(device), regime_ctx.to(device), xgb_pred.to(device)
+            out = hybrid_model(x_quant, x_text, regime_ctx, xgb_pred)
             trusts.append(out["xgb_trust"].cpu().numpy())
     return float(np.concatenate(trusts).mean())
 

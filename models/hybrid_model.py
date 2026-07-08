@@ -181,11 +181,17 @@ class HybridCNNLSTMTransformer(nn.Module):
         summary = (seq * weights).sum(dim=1)
         return self.context_combine(torch.cat([last, summary], dim=-1))
 
-    def forward(self, x: torch.Tensor, regime_ctx: torch.Tensor, xgb_pred: torch.Tensor = None):
+    def forward(self, x_quant: torch.Tensor, x_text: torch.Tensor,
+                regime_ctx: torch.Tensor, xgb_pred: torch.Tensor = None):
         """
-        x:          (B, T=60, 30) fused raw feature window
+        x_quant:    (B, T=60, 18) technical + macro stream  -> Tower A
+        x_text:     (B, T=60, 12) FinBERT sentiment stream  -> Tower B
         regime_ctx: (B, 2) [realised_vol, atr] at the forecast origin
         xgb_pred:   (B, k) the frozen XGBoost expert's forecast (zeros if None)
+
+        The two modalities arrive on SEPARATE tensors (the DataLoader splits
+        them, data/dataset.py), so the quant tower is structurally isolated
+        from the text stream -- no in-network slicing, no shared padding.
 
         Returns dict with:
             forecast:         (B, k) blended mean forecast (log-return units)
@@ -194,18 +200,17 @@ class HybridCNNLSTMTransformer(nn.Module):
             log_var:          (B, k) predicted log-variance (return_scale units)
             gate, xgb_trust, direction_logits, context: as before
         """
-        n_text = DATA_CFG.n_sentiment_features
+        quant = x_quant                     # (B, T, 18) technical + macro
+        text = x_text                       # (B, T, 12) sentiment stream
 
         if self.training and MODEL_CFG.sentiment_dropout_p > 0:
             # Modality masking: zero the whole text stream for a random
-            # subset of samples (see module docstring, item 6).
-            drop = torch.rand(x.size(0), device=x.device) < MODEL_CFG.sentiment_dropout_p
+            # subset of samples (see module docstring, item 6). Only the
+            # text tensor is touched -- the quant tower is untouched.
+            drop = torch.rand(text.size(0), device=text.device) < MODEL_CFG.sentiment_dropout_p
             if drop.any():
-                x = x.clone()
-                x[drop, :, -n_text:] = 0.0
-
-        quant = x[:, :, :-n_text]           # (B, T, 18) technical + macro
-        text = x[:, :, -n_text:]            # (B, T, 12) sentiment stream
+                text = text.clone()
+                text[drop] = 0.0
 
         # Tower A: quantitative engine
         local = self.cnn(self.quant_proj(quant))                 # (B, T, 128)
@@ -234,12 +239,15 @@ class HybridCNNLSTMTransformer(nn.Module):
         temporal = lstm_weight * temporal_lstm + (1.0 - lstm_weight) * temporal_gru
         deep_context = self.pool_context(temporal)               # (B, 256)
 
-        # Raw macro+sentiment features at the most recent bar in the window
-        raw_macro_sentiment = x[:, -1, DATA_CFG.n_technical_features:]  # (B, 18)
-        skip = self.skip_proj(raw_macro_sentiment)                       # (B, 32)
+        # Raw macro+sentiment features at the most recent bar in the window:
+        # macro is the tail of the quant tensor, sentiment is the text
+        # tensor (post-masking, so the skip respects modality dropout too).
+        raw_macro = quant[:, -1, DATA_CFG.n_technical_features:]          # (B, 6)
+        raw_sentiment = text[:, -1, :]                                    # (B, 12)
+        skip = self.skip_proj(torch.cat([raw_macro, raw_sentiment], dim=-1))  # (B, 32)
 
         if xgb_pred is None:
-            xgb_pred = torch.zeros(x.size(0), MODEL_CFG.horizon, device=x.device, dtype=x.dtype)
+            xgb_pred = torch.zeros(quant.size(0), MODEL_CFG.horizon, device=quant.device, dtype=quant.dtype)
         xgb_normed = self.xgb_input_dropout(self.xgb_input_norm(xgb_pred))
         xgb_embed_raw = self.xgb_embed(xgb_normed)               # (B, 32)
 
