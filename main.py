@@ -140,7 +140,14 @@ def run(
         import pandas as _pd
 
         from utils.event_calendar import scheduled_event_mask
-        origin_dates = _pd.DatetimeIndex([panel.dates[t] for t in origins])
+        # The panel origins carry mixed EST/EDT offsets across 2022-2026; a
+        # bare DatetimeIndex over that Python list is rejected by pandas
+        # ("Tz-aware ... unless utc=True"). Normalise to tz-naive calendar
+        # dates first (same treatment as utils/backtest.py) so the naive
+        # FOMC/NFP calendar comparison matches.
+        origin_dates = _pd.DatetimeIndex(
+            _pd.to_datetime([panel.dates[t] for t in origins], utc=True).tz_localize(None)
+        )
         mask |= scheduled_event_mask(origin_dates)
         if not mask.any():
             return None
