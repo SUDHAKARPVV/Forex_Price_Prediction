@@ -230,8 +230,8 @@ def fetch_gdelt_news(
     base = "https://api.gdeltproject.org/api/v2/doc/doc"
     now = datetime.utcnow()
     articles = []
-    _gdelt_cooled_down = [False]  # one long cool-down per fetch, max
     n_windows = max(1, days // window_days)
+    n_failed = 0
     for w in range(n_windows):
         end = now - pd.Timedelta(days=w * window_days)
         start = end - pd.Timedelta(days=window_days)
@@ -244,31 +244,31 @@ def fetch_gdelt_news(
             "startdatetime": start.strftime("%Y%m%d%H%M%S"),
             "enddatetime": end.strftime("%Y%m%d%H%M%S"),
         }
-        # GDELT enforces "at most one request every 5 seconds" and applies
-        # an extended penalty window after violations. Strategy: one
-        # attempt per window at 10s spacing; on the first 429, take a
-        # single long cool-down and retry once, then accept partial
-        # coverage rather than fighting the limiter.
+        # GDELT enforces ~1 request / 5s and penalises bursts with 429.
+        # RETRY each window on 429 with escalating backoff (rather than
+        # skipping it, which left month-sized coverage holes); only give up
+        # on a window after several patient attempts. Base 6s spacing keeps
+        # us just above the sustained limit.
         payload = None
         reason = None
-        for attempt in (1, 2):
+        for backoff in (0, 12, 25, 45):
+            if backoff:
+                time.sleep(backoff)
             try:
                 resp = requests.get(base, params=params, headers=BROWSER_HEADERS, timeout=timeout)
                 if resp.status_code == 200:
                     payload = resp.json()
                     break
                 reason = f"HTTP {resp.status_code}"
+                if resp.status_code != 429:
+                    break  # non-rate-limit error -- retrying won't help
             except Exception as e:
                 reason = f"{type(e).__name__}: {e}"
-            if attempt == 1 and reason == "HTTP 429" and not _gdelt_cooled_down[0]:
-                _gdelt_cooled_down[0] = True
-                print("[real_data_feed] GDELT rate limit hit; cooling down 60s once...")
-                time.sleep(60.0)
-            else:
-                break  # don't burn more time retrying inside one window
         if payload is None:
-            print(f"[real_data_feed] GDELT window {w+1}/{n_windows} failed ({reason}); continuing...")
-            time.sleep(10.0)
+            n_failed += 1
+            if n_failed <= 3 or n_failed % 10 == 0:
+                print(f"[real_data_feed] GDELT window {w+1}/{n_windows} failed after retries ({reason})")
+            time.sleep(6.0)
             continue
         for art in payload.get("articles", []):
             seen = art.get("seendate", "")  # e.g. 20260707T031500Z
@@ -282,15 +282,54 @@ def fetch_gdelt_news(
                 "summary": "",  # GDELT artlist mode carries titles only
                 "link": art.get("url", ""),
             })
-        time.sleep(10.0)  # GDELT rate limit: stay well above one request per 5 seconds
+        time.sleep(6.0)  # base spacing between successful windows
 
     df = pd.DataFrame(articles)
     if df.empty:
         print("[real_data_feed] GDELT returned no articles (API unreachable or empty result).")
         return df
     df = df.drop_duplicates(subset=["title"]).sort_values("timestamp").reset_index(drop=True)
-    print(f"[real_data_feed] GDELT news OK: {len(df)} unique headlines covering the trailing {days} days.")
+    n_months = df["timestamp"].dt.to_period("M").nunique()
+    print(f"[real_data_feed] GDELT news OK: {len(df)} unique headlines over {n_months} months "
+          f"(trailing {days} days; {n_failed} windows unfilled).")
     return df
+
+
+def _grow_news_archive(fresh: pd.DataFrame, ticker: str, exports_dir: str = "exports") -> pd.DataFrame:
+    """Merge a freshly-fetched (partial) headline set into a persistent
+    per-ticker news archive on disk, de-duplicated on title, and return the
+    FULL accumulated archive. Each run's rate-limited fetch fills more of
+    the month-sized coverage holes, so sentiment coverage of the test
+    window grows monotonically across runs. Never raises."""
+    import os
+
+    try:
+        safe = ticker.replace("=", "").replace("^", "").replace("-", "").replace(".", "")
+        arch_dir = os.path.join(exports_dir, "archive")
+        os.makedirs(arch_dir, exist_ok=True)
+        path = os.path.join(arch_dir, f"news_{safe}.csv")
+
+        frames = []
+        if os.path.exists(path):
+            old = pd.read_csv(path, parse_dates=["timestamp"])
+            frames.append(old)
+        if fresh is not None and not fresh.empty:
+            frames.append(fresh)
+        if not frames:
+            return fresh if fresh is not None else pd.DataFrame()
+
+        merged = pd.concat(frames, ignore_index=True)
+        merged = merged.dropna(subset=["title"]).drop_duplicates(subset=["title"])
+        merged = merged.sort_values("timestamp").reset_index(drop=True)
+        merged.to_csv(path, index=False)
+        n_months = merged["timestamp"].dt.to_period("M").nunique() if len(merged) else 0
+        print(f"[real_data_feed] news archive: {len(merged)} headlines over {n_months} months "
+              f"({merged['timestamp'].min().date()} -> {merged['timestamp'].max().date()}) "
+              f"[+{0 if fresh is None else len(fresh)} this run]")
+        return merged
+    except Exception as e:
+        warnings.warn(f"news archive merge failed (non-fatal): {type(e).__name__}: {e}")
+        return fresh if fresh is not None else pd.DataFrame()
 
 
 def fetch_all_news(feed_urls=None, gdelt_days: int = 60, gdelt_window_days: int = 5) -> pd.DataFrame:
@@ -597,11 +636,10 @@ def try_fetch_real_panel(ticker_symbol: str = "GC=F", interval: str = "5m", coun
     if ohlc.empty:
         return None
 
-    # Interval-aware news depth, matched to each interval's PRICE history:
-    # minute bars have 60 days of prices (5-day GDELT slices), hourly bars
-    # have 730 days (monthly slices), daily bars get ~3 years -- the DOC
-    # API archive starts in 2017, and bars older than the news coverage
-    # simply carry the 'none' signal ("no news known").
+    # Interval-aware news depth. Daily bars now reach ~5 years back (1825
+    # days) so news covers the entire out-of-sample TEST window (the last
+    # ~15% of a 25-year daily history starts ~2022) -- the earlier 3-year
+    # depth left over a year of the test set newsless.
     if interval.endswith("m"):
         gdelt_days, gdelt_window = 60, 5
         align_hours = 6.0
@@ -609,13 +647,24 @@ def try_fetch_real_panel(ticker_symbol: str = "GC=F", interval: str = "5m", coun
         gdelt_days, gdelt_window = 730, 30
         align_hours = 6.0
     else:
-        gdelt_days, gdelt_window = 1095, 30
-        # Daily bars: a 72h trailing alignment window (vs 24h) lets each bar
-        # inherit the prior few days' gold headlines when a given day had
-        # none published -- smoothing the sparse-news blind spot without any
+        # 45-day windows over 5 years = ~40 GDELT requests (vs ~60 at
+        # 30-day), cutting rate-limit exposure while GDELT's 250-record cap
+        # per window still yields ~5+ headlines/day.
+        gdelt_days, gdelt_window = 1825, 45
+        # Daily bars: a 120h (5-day) trailing alignment window lets each bar
+        # inherit the prior days' gold headlines when a given day had none
+        # published, so sparse coverage still populates most bars -- no
         # look-ahead (only news strictly before the bar is used).
-        align_hours = 72.0
-    news = fetch_all_news(gdelt_days=gdelt_days, gdelt_window_days=gdelt_window)
+        align_hours = 120.0
+    fresh = fetch_all_news(gdelt_days=gdelt_days, gdelt_window_days=gdelt_window)
+
+    # Persistent news archive: merge this run's (rate-limited, partial)
+    # fetch into a per-ticker archive on disk and align the FULL archive to
+    # bars. GDELT's free tier drops ~half the monthly windows per run to
+    # rate limits, so coverage is patchy in any single run; accumulating
+    # across runs fills the month-sized holes over time (same idea as the
+    # price archive, applied to news).
+    news = _grow_news_archive(fresh, ticker_symbol)
     news_aligned = align_news_to_bars(ohlc.index, news, window_hours=align_hours)
 
     # Real macro stream (Yahoo rates/DXY + BLS CPI); None -> synthetic fallback.
