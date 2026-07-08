@@ -87,8 +87,8 @@ exchange timestamp. Full extract: <code>exports/fx_prices_yfinance.csv</code>.</
       <td>4176.40</td>
       <td>4192.40</td>
       <td>4127.70</td>
-      <td>4166.00</td>
-      <td>73104</td>
+      <td>4152.90</td>
+      <td>88470</td>
     </tr>
   </tbody>
 </table>
@@ -101,7 +101,7 @@ slices for gold-related coverage — 60 days deep for intraday runs, <b>~3 years
 monthly slices for daily runs</b> (the DOC archive starts in 2017; older bars carry the
 explicit 'none' signal) — and live <b>RSS feeds</b> (Investing.com commodities/forex,
 FXStreet gold) for the freshest items GDELT hasn't indexed yet. After de-duplication the
-run captured <b>1448 unique headlines</b>
+run captured <b>1291 unique headlines</b>
 (2024-01-15 → 2026-07-07).</p>
 <p>Each headline is scored by <b>real FinBERT (ProsusAI/finbert)</b>,
 a BERT-family transformer fine-tuned on financial text. FinBERT emits a softmax over
@@ -124,46 +124,46 @@ Full scored table: <code>exports/news_headlines_scored.csv</code>.</p>
   </thead>
   <tbody>
     <tr>
-      <td>2026-07-07 13:59:12</td>
-      <td>British Pound: Capped by layered resistance against US Dollar – Scotiabank</td>
-      <td>-0.641</td>
-      <td>0.641</td>
+      <td>2026-07-07 16:05:12</td>
+      <td>British Pound slips as Hormuz attacks revive USD demand</td>
+      <td>-0.972</td>
+      <td>0.972</td>
     </tr>
     <tr>
-      <td>2026-07-07 14:15:14</td>
-      <td>Japanese Yen: Weak against US Dollar with limited upside – NBC</td>
-      <td>-0.955</td>
-      <td>0.955</td>
+      <td>2026-07-07 16:28:38</td>
+      <td>New Zealand Dollar weakens as Middle East tensions lift US Dollar</td>
+      <td>-0.975</td>
+      <td>0.975</td>
     </tr>
     <tr>
-      <td>2026-07-07 14:25:17</td>
-      <td>Canadian Dollar holds steady despite solid trade data, higher Oil prices</td>
-      <td>0.784</td>
-      <td>0.784</td>
+      <td>2026-07-07 16:57:57</td>
+      <td>Swiss Franc's rebound runs on empty</td>
+      <td>-0.821</td>
+      <td>0.821</td>
     </tr>
     <tr>
-      <td>2026-07-07 14:27:56</td>
-      <td>Euro: ECB cautious as euro area outlook stays fragile – BNY</td>
-      <td>-0.886</td>
-      <td>0.886</td>
+      <td>2026-07-07 17:00:00</td>
+      <td>Gold IRA Rollover Guide Released : What to Know Before Moving a 401 ( k ) or IRA</td>
+      <td>0.000</td>
+      <td>0.946</td>
     </tr>
     <tr>
-      <td>2026-07-07 14:42:11</td>
-      <td>Gold stalls recovery as traders eye FOMC meeting minutes</td>
-      <td>-0.848</td>
-      <td>0.848</td>
+      <td>2026-07-07 17:00:00</td>
+      <td>Four Nines Gold Enhances Investor Communications as Hayden Hill Advances Toward</td>
+      <td>0.778</td>
+      <td>0.778</td>
     </tr>
     <tr>
-      <td>2026-07-07 14:42:20</td>
-      <td>Japanese Yen: Near historic lows against US Dollar – Scotiabank</td>
-      <td>-0.951</td>
-      <td>0.951</td>
+      <td>2026-07-07 18:00:34</td>
+      <td>FOMC minutes, crude oil inventories among economic data due Wednesday</td>
+      <td>0.000</td>
+      <td>0.904</td>
     </tr>
   </tbody>
 </table>
-<p><b>Output analysis:</b> polarity mean -0.009, std 0.644,
+<p><b>Output analysis:</b> polarity mean -0.029, std 0.633,
 range -0.98 … +0.96.
-Class balance: <b>31% positive</b>, <b>39% neutral</b>, <b>30% negative</b> —
+Class balance: <b>30% positive</b>, <b>38% neutral</b>, <b>32% negative</b> —
 a healthy two-sided distribution (a lexicon fallback typically collapses to mostly-neutral;
 the wide spread here is the FinBERT signature). The near-zero mean says the 60-day window
 carried no persistent directional news bias, so any model edge must come from
@@ -234,9 +234,9 @@ sentiment block that enters the window
     <tr>
       <td>2026-06-30 00:00:00-04:00</td>
       <td>4022.900</td>
-      <td>-0.010</td>
+      <td>-0.009</td>
       <td>0.000</td>
-      <td>-0.304</td>
+      <td>-0.296</td>
       <td>0.000</td>
       <td>0.000</td>
       <td>0.000</td>
@@ -245,20 +245,20 @@ sentiment block that enters the window
     <tr>
       <td>2026-07-01 00:00:00-04:00</td>
       <td>4068.300</td>
-      <td>-0.008</td>
-      <td>0.000</td>
-      <td>-0.304</td>
-      <td>0.000</td>
+      <td>-0.059</td>
+      <td>-0.251</td>
+      <td>1.075</td>
       <td>0.000</td>
       <td>0.000</td>
       <td>1.000</td>
+      <td>0.000</td>
     </tr>
     <tr>
       <td>2026-07-02 00:00:00-04:00</td>
       <td>4112.700</td>
-      <td>-0.006</td>
-      <td>0.000</td>
-      <td>-0.304</td>
+      <td>-0.047</td>
+      <td>0.251</td>
+      <td>-0.358</td>
       <td>0.000</td>
       <td>0.000</td>
       <td>0.000</td>
@@ -267,24 +267,24 @@ sentiment block that enters the window
     <tr>
       <td>2026-07-06 00:00:00-04:00</td>
       <td>4155.100</td>
-      <td>-0.005</td>
-      <td>0.000</td>
-      <td>-0.304</td>
-      <td>0.000</td>
+      <td>0.081</td>
+      <td>0.571</td>
+      <td>1.748</td>
       <td>0.000</td>
       <td>0.000</td>
       <td>1.000</td>
+      <td>0.000</td>
     </tr>
     <tr>
       <td>2026-07-07 00:00:00-04:00</td>
-      <td>4166.000</td>
-      <td>-0.004</td>
-      <td>0.000</td>
-      <td>-0.304</td>
-      <td>0.000</td>
+      <td>4152.900</td>
+      <td>0.064</td>
+      <td>-0.571</td>
+      <td>2.769</td>
       <td>0.000</td>
       <td>0.000</td>
       <td>1.000</td>
+      <td>0.000</td>
     </tr>
   </tbody>
 </table>
@@ -311,7 +311,7 @@ remains a complete forecaster (without it, the blend provably collapses into XGB
 earlier documented iteration); checkpoints are selected by <b>validation directional
 accuracy</b>; the loss adds a sign-agreement penalty (weight 0.35) to plain MSE.</p>
 
-<p><b>Seed 9</b> — test DirAcc 0.520 · first test-set forecast origins from
+<p><b>Seed 9</b> — test DirAcc 0.516 · first test-set forecast origins from
 <code>exports/predictions_test_Hybrid_CNN_LSTM_Transformer_seed9.csv</code>
 (h1 = next bar, h10 = cumulative 10 bars ahead, log-return units):</p>
 <table class="dataframe">
@@ -328,28 +328,28 @@ accuracy</b>; the loss adds a sign-agreement penalty (weight 0.35) to plain MSE.
     <tr>
       <td>2022-08-22 00:00:00-04:00</td>
       <td>+0.00735</td>
-      <td>+0.00006</td>
+      <td>-0.00002</td>
       <td>-0.01957</td>
-      <td>+0.02109</td>
+      <td>+0.02078</td>
     </tr>
     <tr>
       <td>2022-08-23 00:00:00-04:00</td>
       <td>+0.00057</td>
-      <td>+0.00079</td>
+      <td>+0.00068</td>
       <td>-0.01820</td>
-      <td>+0.00654</td>
+      <td>+0.00606</td>
     </tr>
     <tr>
       <td>2022-08-24 00:00:00-04:00</td>
       <td>+0.00565</td>
-      <td>+0.00085</td>
+      <td>+0.00068</td>
       <td>-0.02303</td>
-      <td>+0.00883</td>
+      <td>+0.00836</td>
     </tr>
   </tbody>
 </table>
 
-<p><b>Seed 36</b> — test DirAcc 0.474 · first test-set forecast origins from
+<p><b>Seed 36</b> — test DirAcc 0.477 · first test-set forecast origins from
 <code>exports/predictions_test_Hybrid_CNN_LSTM_Transformer_seed36.csv</code>
 (h1 = next bar, h10 = cumulative 10 bars ahead, log-return units):</p>
 <table class="dataframe">
@@ -366,28 +366,28 @@ accuracy</b>; the loss adds a sign-agreement penalty (weight 0.35) to plain MSE.
     <tr>
       <td>2022-08-22 00:00:00-04:00</td>
       <td>+0.00735</td>
-      <td>+0.00036</td>
+      <td>+0.00043</td>
       <td>-0.01957</td>
-      <td>+0.00746</td>
+      <td>+0.00920</td>
     </tr>
     <tr>
       <td>2022-08-23 00:00:00-04:00</td>
       <td>+0.00057</td>
-      <td>-0.00060</td>
+      <td>-0.00071</td>
       <td>-0.01820</td>
-      <td>+0.00121</td>
+      <td>+0.00317</td>
     </tr>
     <tr>
       <td>2022-08-24 00:00:00-04:00</td>
       <td>+0.00565</td>
-      <td>+0.00023</td>
+      <td>+0.00004</td>
       <td>-0.02303</td>
-      <td>+0.00070</td>
+      <td>+0.00261</td>
     </tr>
   </tbody>
 </table>
 
-<p><b>Seed 99</b> — test DirAcc 0.529 · first test-set forecast origins from
+<p><b>Seed 99</b> — test DirAcc 0.537 · first test-set forecast origins from
 <code>exports/predictions_test_Hybrid_CNN_LSTM_Transformer_seed99.csv</code>
 (h1 = next bar, h10 = cumulative 10 bars ahead, log-return units):</p>
 <table class="dataframe">
@@ -404,23 +404,23 @@ accuracy</b>; the loss adds a sign-agreement penalty (weight 0.35) to plain MSE.
     <tr>
       <td>2022-08-22 00:00:00-04:00</td>
       <td>+0.00735</td>
-      <td>+0.00851</td>
+      <td>+0.00857</td>
       <td>-0.01957</td>
-      <td>+0.02377</td>
+      <td>+0.02433</td>
     </tr>
     <tr>
       <td>2022-08-23 00:00:00-04:00</td>
       <td>+0.00057</td>
-      <td>+0.00629</td>
+      <td>+0.00651</td>
       <td>-0.01820</td>
-      <td>+0.01456</td>
+      <td>+0.01604</td>
     </tr>
     <tr>
       <td>2022-08-24 00:00:00-04:00</td>
       <td>+0.00565</td>
-      <td>+0.00600</td>
+      <td>+0.00621</td>
       <td>-0.02303</td>
-      <td>+0.01644</td>
+      <td>+0.01733</td>
     </tr>
   </tbody>
 </table>
@@ -460,13 +460,13 @@ own parts. ARIMA/GARCH are deterministic (no seed variance). The <b>seed-ensembl
     </tr>
     <tr>
       <td>Hybrid CNN-LSTM-Transformer (+GRU +XGBoost)</td>
-      <td>0.5077</td>
-      <td>0.0238</td>
-      <td>0.5200</td>
-      <td>0.4740</td>
-      <td>0.5290</td>
-      <td>0.0219</td>
-      <td>0.0302</td>
+      <td>0.5099</td>
+      <td>0.0247</td>
+      <td>0.5160</td>
+      <td>0.4770</td>
+      <td>0.5370</td>
+      <td>0.0218</td>
+      <td>0.0301</td>
     </tr>
     <tr>
       <td>Hybrid Seed-Ensemble (3 seeds avg)</td>
@@ -494,20 +494,20 @@ own parts. ARIMA/GARCH are deterministic (no seed variance). The <b>seed-ensembl
 <h2>7. Comparison graphs — which model wins where</h2>
 
 <p><b>Scenario A: predict every bar (unfiltered).</b> Hybrid
-0.508 vs ARIMA 0.486
+0.510 vs ARIMA 0.486
 and GARCH 0.576 (walk-forward, subsampled origins).
 The econometric baselines model conditional mean/variance directly and are strong on
 noisy bars; the chart shows the mean ± std over seeds against the 0.50 coin-flip line.</p>
 <img src="charts_final/diracc_mean_std.png" alt="mean diracc">
 <img src="charts_final/per_seed_diracc.png" alt="per-seed diracc">
 <p><b>Scenario B: act only on confident signals.</b> The Hybrid's mean conviction curve:
-<b>0.508 unfiltered → 0.520 @20% → 0.514 @10% → 0.523 @5% coverage</b> — accuracy rises monotonically as it speaks more selectively, evidence
+<b>0.510 unfiltered → 0.522 @20% → 0.512 @10% → 0.525 @5% coverage</b> — accuracy rises monotonically as it speaks more selectively, evidence
 that its forecast magnitude is informative conviction, not noise. The deployable,
 validation-calibrated version of this rule and its costed backtest are in Section 8.
 ARIMA/GARCH now appear on the same curve, computed from their full-resolution
 walk-forward forecasts.</p>
 <img src="charts_final/conviction_coverage.png" alt="conviction coverage">
-<p><b>Scenario C: longer horizons.</b> Per-horizon accuracy on the cumulative return (ensemble: h1 0.521 vs h10 0.519)
+<p><b>Scenario C: longer horizons.</b> Per-horizon accuracy on the cumulative return (ensemble: h1 0.515 vs h10 0.516)
 shows where in the 10-bar horizon the model earns its accuracy.</p>
 <img src="charts_final/per_horizon_diracc.png" alt="per horizon">
 <p><b>Scenario D: magnitude error (MAE).</b> The econometric baselines typically win on
@@ -658,6 +658,23 @@ change, stay flat otherwise. Accuracy is a proxy; this is the decision-grade met
 </table>
 <img src="charts_final/backtest_equity.png" alt="backtest equity">
 
+<p><b>Inter-model consensus (committee-vote) filter:</b> the per-seed backtests swung
+widely, so instead of trusting one seed, the framework trades the 1-step forecast only
+when <b>all three seeds agree on its sign AND their mutual dispersion is below the window
+median</b>; it abstains whenever the committee disagrees. This is a standard ensemble
+risk-management filter, and it replaces the fragile per-seed follow/fade choice with an
+agreement-gated one.</p>
+<ul>
+<li>Traded <b>272 of 962 test bars (28%)</b>
+(committee unanimous + concordant); abstained on the rest.</li>
+<li>Consensus directional accuracy <b>0.522</b>
+vs 0.515 trading every bar.</li>
+<li>Costed backtest: <b>+26.4% net</b> at Sharpe
+0.74, 373 trades at
+2.0bps (buy-and-hold +141.2%,
+Sharpe 1.17).</li>
+</ul>
+
 <p><b>Feature-importance audit (noise check):</b> aggregated XGBoost-expert importances
 per named feature. Lowest-importance candidates for removal in a future round:
 <i>sent_vol (0.0000), headline_count_z (0.0000), sig_buy (0.0000), sig_sell (0.0000), sig_none (0.0000)</i>. Note this measures the TABULAR expert's view only — the deep
@@ -668,7 +685,7 @@ removal; it flags candidates for an ablation.</p>
 
 <h3>Final verdict</h3>
 <div class="callout"><b>Where this run landed:</b> Hybrid unfiltered DirAcc
-<b>0.508 ± 0.024</b> vs best baseline
+<b>0.510 ± 0.025</b> vs best baseline
 GARCH (AR(1)-GARCH(1,1)) at 0.576. The seed-ensemble reaches DirAcc <b>0.504</b> (selective: 0.531 @20%, 0.538 @10%). The event-window,
 calibrated-abstention and backtest tables above show the behaviour of the model's
 conviction machinery on this run's data. The econometric baseline wins this round's raw accuracy — and that is a publishable finding, not an embarrassment: GARCH (AR(1)-GARCH(1,1)) models exactly the conditional mean/variance structure that dominates a strongly trending, volatility-clustered window, while the Hybrid's advantages are concentrated in its conviction machinery (selective accuracy, abstention, event analysis) and its multi-modal interpretability rather than the unfiltered average. All models are scored on identical, full-resolution test origins.</div>
@@ -699,7 +716,7 @@ recency; adding FOMC meeting dates and NFP releases would sharpen the event anal
 <p>This project built and honestly evaluated a complete multi-modal FX forecasting
 system: <b>6,485 live daily XAU/USD candles</b> from yfinance
 (daily runs use the full listed history), a real news pipeline (GDELT archive + RSS,
-<b>1448</b> headlines) scored by real FinBERT, <b>REAL macro (Yahoo rates/DXY + BLS CPI)</b>, 26 engineered
+<b>1291</b> headlines) scored by real FinBERT, <b>REAL macro (Yahoo rates/DXY + BLS CPI)</b>, 26 engineered
 features across technical / macro / sentiment streams, and a Hybrid
 CNN-LSTM-Transformer whose final forecast is a learned per-horizon convex blend between
 a deep pathway (conditioned on volatility regime and current news sentiment) and an

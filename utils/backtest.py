@@ -37,6 +37,9 @@ def conviction_backtest(
     forecast sign, "fade" trades against it (the momentum-reversal rule --
     see main.py:calibrate_abstention). Returns summary statistics plus the
     equity curves (for charting)."""
+    # Parse robustly: exported 'origin' timestamps carry mixed EST/EDT
+    # offsets that a bare DatetimeIndex rejects; normalise to tz-naive.
+    dates = pd.to_datetime(dates, utc=True).tz_localize(None)
     dates = pd.DatetimeIndex(dates)
     direction = 1.0 if mode == "follow" else -1.0
     conf = conviction if conviction is not None else np.abs(y_pred_h1)

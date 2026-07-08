@@ -655,6 +655,27 @@ change, stay flat otherwise. Accuracy is a proxy; this is the decision-grade met
 {df_to_html(pd.DataFrame(bt_rows), floatfmt="{:.2f}")}
 <img src="{charts.get('backtest_equity.png','')}" alt="backtest equity">
 """)
+        cons = rm.get("consensus")
+        if cons:
+            cb = cons["backtest"]
+            S.append(f"""
+<p><b>Inter-model consensus (committee-vote) filter:</b> the per-seed backtests swung
+widely, so instead of trusting one seed, the framework trades the 1-step forecast only
+when <b>all three seeds agree on its sign AND their mutual dispersion is below the window
+median</b>; it abstains whenever the committee disagrees. This is a standard ensemble
+risk-management filter, and it replaces the fragile per-seed follow/fade choice with an
+agreement-gated one.</p>
+<ul>
+<li>Traded <b>{cons['n_traded']} of {cons['n_test_bars']} test bars ({cons['trade_coverage']*100:.0f}%)</b>
+(committee unanimous + concordant); abstained on the rest.</li>
+<li>Consensus directional accuracy <b>{cons['consensus_diracc']:.3f}</b>
+vs {cons['unfiltered_diracc']:.3f} trading every bar.</li>
+<li>Costed backtest: <b>{cb['total_return_pct']:+.1f}% net</b> at Sharpe
+{cb['annualised_sharpe']:.2f}, {cb['n_transactions']} trades at
+{cb['cost_bps_per_change']}bps (buy-and-hold {cb['buy_hold_return_pct']:+.1f}%,
+Sharpe {cb['buy_hold_sharpe']:.2f}).</li>
+</ul>
+""")
         if rm.get("feature_importance"):
             fi = rm["feature_importance"]
             bottom_txt = ", ".join(f"{n} ({v:.4f})" for n, v in fi["bottom"])

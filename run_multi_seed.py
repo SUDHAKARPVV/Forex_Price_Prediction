@@ -100,9 +100,10 @@ def build_consensus_filter(seeds, model="Hybrid_CNN_LSTM_Transformer", cost_bps=
     mean_pred = h1_preds.mean(axis=1)
 
     # Costed backtest: unanimous+low-dispersion days only, follow the vote.
-    tau = 0.0  # gating is the consensus mask itself; pass |pred| >= 0
-    conv = np.where(trade, np.abs(mean_pred) + 1.0, 0.0)       # forces flat off-consensus
-    bt = conviction_backtest(actual_h1, mean_pred, dates, tau=tau, mode="follow",
+    # Off-consensus days get conviction 0 (flat); consensus days get >=1,
+    # so tau=0.5 gates exactly the committee-approved bars.
+    conv = np.where(trade, np.abs(mean_pred) + 1.0, 0.0)
+    bt = conviction_backtest(actual_h1, mean_pred, dates, tau=0.5, mode="follow",
                              cost_bps=cost_bps, conviction=conv)
     return {
         "n_test_bars": int(len(actual_h1)),
