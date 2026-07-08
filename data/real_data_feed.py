@@ -46,6 +46,7 @@ is visible rather than silent.
 """
 from __future__ import annotations
 
+import os
 import time
 import warnings
 from datetime import datetime
@@ -411,17 +412,32 @@ def fetch_all_news(feed_urls=None, gdelt_days: int = 60, gdelt_window_days: int 
 # ("New Zealand Dollar rallies...", "Swiss Franc weakens..."); those are
 # dropped UNLESS the headline also mentions gold.
 _GOLD_PATTERN = r"\bgold\b|xau|bullion|precious metal|comex gold|gold price|spot gold"
+# US-specific macro drivers of gold. Bare "inflation" was REMOVED: it matched
+# any country's inflation chatter ("Polish Zloty ... inflation ..."), letting
+# foreign-FX headlines through the macro gate. The US CPI/PCE releases (the
+# gold-relevant inflation prints) are still caught explicitly by \bcpi\b/\bpce\b
+# and "us inflation".
 _GOLD_MACRO_PATTERN = (
     r"federal reserve|\bfomc\b|\bpowell\b|\bfed\b|rate (?:cut|hike|decision)"
-    r"|interest rate decision|\bcpi\b|inflation|\bpce\b|dollar index|\bdxy\b"
+    r"|interest rate decision|\bcpi\b|us inflation|\bpce\b|dollar index|\bdxy\b"
     r"|treasury yield|real yield|safe.?haven"
 )
-# Foreign single-currency / cross-pair chatter that is NOT about gold.
+# Foreign single-currency / cross-pair chatter that is NOT about gold. Extended
+# beyond the majors to the minor/EM currencies that were still contaminating the
+# stream (Swedish krona/SEK, Polish zloty/PLN, Norwegian krone, Mexican peso,
+# etc.) plus their central banks.
 _FOREIGN_FX_PATTERN = (
     r"new zealand dollar|australian dollar|canadian dollar|swiss franc"
     r"|british pound|japanese yen|\beuro\b|\bnzd\b|\baud\b|\bcad\b|\bchf\b"
     r"|\bgbp\b|\bjpy\b|eur/usd|aud/usd|gbp/usd|usd/jpy|nzd/usd|usd/cad|usd/chf"
     r"|rbnz|\brba\b|\bboe\b|\bboj\b|\becb\b"
+    # minor / EM currencies + their central banks
+    r"|swedish krona|norwegian krone|danish krone|polish zloty|hungarian forint"
+    r"|czech koruna|mexican peso|south african rand|turkish lira|indian rupee"
+    r"|chinese yuan|renminbi|singapore dollar|hong kong dollar|brazilian real"
+    r"|\bsek\b|\bnok\b|\bpln\b|\bhuf\b|\bczk\b|\bmxn\b|\bzar\b|\btry\b|\binr\b"
+    r"|\bcny\b|\bsgd\b|\bhkd\b|\bbrl\b|\bkrw\b|krona|krone|zloty|forint|renminbi"
+    r"|\bnbp\b|riksbank|norges bank|banxico"
 )
 
 
@@ -712,11 +728,13 @@ def try_fetch_real_panel(ticker_symbol: str = "GC=F", interval: str = "5m", coun
         # 30-day), cutting rate-limit exposure while GDELT's 250-record cap
         # per window still yields ~5+ headlines/day.
         gdelt_days, gdelt_window = 1825, 45
-        # Daily bars: a 120h (5-day) trailing alignment window lets each bar
-        # inherit the prior days' gold headlines when a given day had none
-        # published, so sparse coverage still populates most bars -- no
-        # look-ahead (only news strictly before the bar is used).
-        align_hours = 120.0
+        # Daily bars: a 168h (7-day) trailing alignment window lets each bar
+        # inherit the prior week's gold headlines when a given day had none
+        # published, so sparse coverage still populates more bars -- no
+        # look-ahead (only news strictly before the bar is used). Widened from
+        # 120h to lift test-set sentiment coverage on the free GDELT feed
+        # (the binding data limit) without any extra fetching.
+        align_hours = 168.0
     # PREFER the offline archive, and fetch only INCREMENTALLY. The dense
     # history is built once by build_news_archive.py; here we top up ONLY
     # the gap between the archive's latest headline and today (never
@@ -725,6 +743,23 @@ def try_fetch_real_panel(ticker_symbol: str = "GC=F", interval: str = "5m", coun
     # exists yet, do a one-time full live fetch.
     archive_path = news_archive_path(ticker_symbol)
     last_date = news_archive_max_date(ticker_symbol)
+    # OFFLINE rebuild: when the archive is already current (or GDELT is rate-
+    # limited), skip the live top-up entirely and rebuild the panel straight
+    # from the cached, already-scored archive. Set FOREX_OFFLINE_NEWS=1. This
+    # is the fast path for re-aligning after a filter/align-window change --
+    # no fetching, no re-scoring (honours "don't redo work").
+    if os.environ.get("FOREX_OFFLINE_NEWS") and last_date is not None and os.path.exists(archive_path):
+        print(f"[real_data_feed] OFFLINE mode: rebuilding from cached scored archive "
+              f"(latest {last_date.date()}, no GDELT fetch, no re-scoring).")
+        news = pd.read_csv(archive_path, parse_dates=["timestamp"])
+        news = filter_relevant_news(news) if len(news) else news
+        news_aligned = align_scored_news_to_bars(ohlc.index, news, window_hours=align_hours)
+        macro = fetch_real_macro(ohlc.index)
+        return {
+            "ohlc": ohlc, "news_aligned": news_aligned, "news_raw": news,
+            "n_raw_headlines": len(news), "macro": macro,
+            "ticker": ticker_symbol, "interval": interval,
+        }
     if last_date is not None:
         gap_days = max(1, (pd.Timestamp.utcnow().tz_localize(None) - last_date).days + 1)
         print(f"[real_data_feed] news archive present (latest {last_date.date()}); "
