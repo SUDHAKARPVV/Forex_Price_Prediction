@@ -42,34 +42,75 @@ def _diracc(y_true, y_pred, mask=None):
 
 def regime_gated_blend(val_true, val_hybrid, val_garch, val_regimes,
                        test_true, test_hybrid, test_garch, test_regimes,
-                       weight_grid=None):
+                       weight_grid=None, deviate_margin=0.02):
     """Fit a per-regime convex weight + follow/fade mode on validation, apply
     to test. All arrays are (N, horizon). Returns a report dict; the headline
     field `blended_diracc` is the test directional accuracy to compare against
-    GARCH-alone (the number we are trying to beat)."""
+    GARCH-alone (the number we are trying to beat).
+
+    SHRINKAGE GUARD (against small-sample validation overfit): the globally
+    stronger single model on validation is the ANCHOR (here GARCH, whose AR(1)
+    drift dominates direction). A per-regime blended rule is only ADOPTED if it
+    beats simply deferring to the anchor within that regime by `deviate_margin`
+    on validation; otherwise the regime defers to the anchor (w->anchor). Ties
+    in the weight scan break toward the anchor (fewer degrees of freedom). This
+    stops the fit from chasing a fragile pure-Hybrid rule in a regime where the
+    Hybrid only wins on validation noise -- the failure mode that put the first
+    unguarded blend BELOW GARCH out of sample."""
     if weight_grid is None:
         weight_grid = np.round(np.arange(0.0, 1.0001, 0.1), 3)
 
     regimes = sorted(set(np.unique(val_regimes)) | set(np.unique(test_regimes)))
-    # Global fallback rule (for any regime unseen on validation): calibrate on
-    # the whole validation set.
+
+    # Anchor = globally stronger single model on validation. anchor_w is the
+    # convex weight that selects it (1.0 = all GARCH, 0.0 = all Hybrid).
+    val_g_acc = _diracc(val_true, val_garch)
+    val_h_acc = _diracc(val_true, val_hybrid)
+    anchor_w = 1.0 if val_g_acc >= val_h_acc else 0.0
+    anchor_name = "garch" if anchor_w == 1.0 else "hybrid"
+
+    # Anchored weight range: the blend may only ADJUST the dominant model, not
+    # defect to the weaker one. With GARCH the anchor, w is restricted to
+    # [0.5, 1.0] -- the Hybrid decorrelates GARCH's drift (the oracle's winning
+    # w~0.9 lives here) but can never replace it. This is the transferable part
+    # of the edge; full defection (w->0) was pure validation overfit.
+    if anchor_w == 1.0:
+        eff_grid = [w for w in weight_grid if w >= 0.5]
+    else:
+        eff_grid = [w for w in weight_grid if w <= 0.5]
+
     per_regime = {}
 
     def _fit(mask_val):
+        """Best (w, mode) by validation DirAcc; ties break toward the anchor."""
         best = None
-        for w in weight_grid:
+        for w in eff_grid:
             b = (1.0 - w) * val_hybrid + w * val_garch
             follow = _diracc(val_true[mask_val], b[mask_val]) if mask_val.any() else float("nan")
             for mode, acc in (("follow", follow), ("fade", 1.0 - follow)):
-                if best is None or (acc == acc and acc > best["val_diracc"]):
+                if acc != acc:
+                    continue
+                closer = best is not None and abs(w - anchor_w) < abs(best["w"] - anchor_w)
+                if best is None or acc > best["val_diracc"] or (acc == best["val_diracc"] and closer):
                     best = {"w": float(w), "mode": mode, "val_diracc": float(acc)}
         return best
 
     global_rule = _fit(np.ones(len(val_regimes), dtype=bool))
     for r in regimes:
         mval = (val_regimes == r)
-        rule = _fit(mval) if mval.sum() >= 20 else global_rule  # need enough val support
-        per_regime[int(r)] = {**rule, "n_val": int(mval.sum())}
+        if mval.sum() < 20:                       # too little val support -> anchor
+            per_regime[int(r)] = {"w": anchor_w, "mode": "follow",
+                                  "val_diracc": _diracc(val_true[mval], val_garch[mval] if anchor_w else val_hybrid[mval]),
+                                  "n_val": int(mval.sum()), "adopted": False}
+            continue
+        rule = _fit(mval)
+        # Anchor's own validation DirAcc in this regime (defer baseline).
+        anchor_val = _diracc(val_true[mval], (val_garch if anchor_w == 1.0 else val_hybrid)[mval])
+        if rule["val_diracc"] >= anchor_val + deviate_margin:
+            per_regime[int(r)] = {**rule, "n_val": int(mval.sum()), "adopted": True}
+        else:                                     # not a robust enough gain -> anchor
+            per_regime[int(r)] = {"w": anchor_w, "mode": "follow", "val_diracc": anchor_val,
+                                  "n_val": int(mval.sum()), "adopted": False}
 
     # --- Apply frozen rules to the test set ---
     test_blended = np.empty_like(test_hybrid)
@@ -87,6 +128,8 @@ def regime_gated_blend(val_true, val_hybrid, val_garch, val_regimes,
     report = {
         "weight_grid": [float(x) for x in weight_grid],
         "reference_threshold_quantile": 0.7,
+        "anchor": anchor_name,
+        "deviate_margin": deviate_margin,
         "per_regime": {str(k): v for k, v in per_regime.items()},
         "global_rule": global_rule,
         # Headline: directional accuracy of the regime-gated blend (mode applied)

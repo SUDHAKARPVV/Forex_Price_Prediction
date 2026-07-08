@@ -295,6 +295,14 @@ def run(
             y_true[test_hi], test_h, test_g, test_reg,
         )
         reports["Hybrid_CNN_LSTM_Transformer"]["garch_blend"] = blend
+        # Persist the blend inputs so the decision-layer rule can be re-tuned
+        # OFFLINE (no retrain) -- the calibration is deterministic given these.
+        try:
+            np.savez(f"exports/blend_inputs_seed{seed}.npz",
+                     val_true=val_true[val_hi], val_hybrid=val_h, val_garch=val_g, val_reg=val_reg,
+                     test_true=y_true[test_hi], test_hybrid=test_h, test_garch=test_g, test_reg=test_reg)
+        except Exception:
+            pass
         rule_str = ", ".join(f"r{k}:w={v['w']}/{v['mode']}" for k, v in blend["per_regime"].items())
         print(f"[blend] regime-gated GARCH<->Hybrid: blended DirAcc {blend['blended_diracc']:.3f} "
               f"vs Hybrid {blend['hybrid_diracc']:.3f} / GARCH {blend['garch_diracc']:.3f} "
