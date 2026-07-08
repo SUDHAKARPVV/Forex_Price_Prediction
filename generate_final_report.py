@@ -146,23 +146,35 @@ def make_charts(d) -> dict:
         ax.set_ylabel("USD")
         save(fig, "price_series.png")
 
-    # 1b. Real macro series (if the live macro fetch succeeded)
+    # 1b. Real macro series -- plot whichever of the 6 macro columns are
+    # actually present (stationary names OR legacy level names), so the
+    # panel never renders blank when the schema shifts between runs.
     if d["macro"] is not None:
         m = d["macro"]
         date_col = m.columns[0]
         m[date_col] = pd.to_datetime(m[date_col], utc=True)
-        fig, axes = plt.subplots(2, 2, figsize=(9, 4.5), sharex=True)
-        for ax, col, ttl in zip(
-            axes.ravel(),
-            ["rate_z21", "yield_chg5", "dollar_ret5", "cpi_yoy"],
-            ["Policy-rate 21d z-score (^IRX)", "10y yield 5d change (^TNX)",
-             "Dollar index 5d log-return (DXY)", "CPI YoY % (BLS)"],
-        ):
-            if col in m.columns:
+        MACRO_TITLES = {
+            "rate_z21": "Policy-rate 21d z-score (^IRX)",
+            "yield_chg5": "10y yield 5d change (^TNX)",
+            "dollar_ret5": "Dollar index 5d log-return (DXY)",
+            "cpi_yoy": "CPI YoY % (BLS)",
+            "cpi_mom": "CPI MoM % (BLS)",
+            "days_since_cpi": "Days since CPI release (0-1)",
+            # legacy level names (older exports)
+            "rate_level": "Policy-rate level (^IRX)",
+            "yield_10y": "10y Treasury yield (^TNX)",
+            "dollar_index": "US Dollar Index (DXY)",
+        }
+        plot_cols = [c for c in m.columns if c in MACRO_TITLES][:4]
+        if plot_cols:
+            fig, axes = plt.subplots(2, 2, figsize=(9, 4.5), sharex=True)
+            for ax, col in zip(axes.ravel(), plot_cols):
                 ax.plot(m[date_col], m[col], lw=0.7)
-                ax.set_title(ttl, fontsize=9)
-        fig.suptitle("Real macroeconomic stream aligned to the trading calendar", fontsize=11)
-        save(fig, "macro_series.png")
+                ax.set_title(MACRO_TITLES[col], fontsize=9)
+            for ax in axes.ravel()[len(plot_cols):]:
+                ax.axis("off")
+            fig.suptitle("Real macroeconomic stream aligned to the trading calendar", fontsize=11)
+            save(fig, "macro_series.png")
 
     # 2. FinBERT polarity distribution
     if d["news"] is not None:
@@ -388,9 +400,11 @@ carried no persistent directional news bias, so any model edge must come from
     # ---------------- 3. feature engineering ----------------
     S.append("""
 <h2>3. Feature engineering &amp; technical indicators</h2>
-<p>Every bar is described by <b>26 features</b> in three fused streams
-(<code>data/technical_indicators.py</code>, <code>data/sentiment.py</code>,
-<code>data/dataset.py</code>); normalisation statistics are fit on the <b>training split
+<p>Every bar is described by <b>30 engineered features</b> in three fused streams
+(12 technical + 6 macro + 12 sentiment; the earlier 26-feature panel grew by the four
+new technical indicators below). Sources: <code>data/technical_indicators.py</code>,
+<code>data/sentiment.py</code>, <code>data/real_data_feed.py</code>,
+<code>data/dataset.py</code>. Normalisation statistics are fit on the <b>training split
 only</b> and applied everywhere (no test leakage), with a guard for near-constant columns.</p>
 <table>
 <tr><th>Stream</th><th>#</th><th>Features</th><th>Why</th></tr>
@@ -424,6 +438,37 @@ headlines exist — "no news" carries different information than "neutral news")
     if "macro_series.png" in charts:
         S.append(f"""<img src="{charts['macro_series.png']}" alt="real macro series">""")
 
+    # Sample data for all three engineered streams (last few real bars).
+    S.append("<p><b>Sample of the engineered features (most recent bars):</b></p>")
+    # Technical stream -- computed from the exported yfinance prices.
+    if d["prices"] is not None:
+        try:
+            from data.technical_indicators import compute_technical_features
+
+            px = d["prices"].rename(columns=str.lower).set_index("date")
+            tech = compute_technical_features(px).tail(5).round(4)
+            tech.insert(0, "date", pd.to_datetime(tech.index, utc=True).strftime("%Y-%m-%d"))
+            S.append("<p><i>Technical stream (12 features) — computed from OHLCV:</i></p>"
+                     + df_to_html(tech, floatfmt="{:.4f}"))
+        except Exception as e:
+            S.append(f"<p class='small'>(technical sample unavailable: {e})</p>")
+    # Macro stream -- from the exported real macro CSV.
+    if d["macro"] is not None:
+        mm = d["macro"].copy()
+        dc = mm.columns[0]
+        mm[dc] = pd.to_datetime(mm[dc], utc=True).dt.strftime("%Y-%m-%d")
+        S.append("<p><i>Macro stream (6 features) — real, stationary (Yahoo rates/DXY + BLS CPI):</i></p>"
+                 + df_to_html(mm.tail(5).round(4), floatfmt="{:.4f}"))
+    # Sentiment stream -- from the exported per-bar sentiment CSV.
+    if d["sent"] is not None:
+        ss = d["sent"].copy()
+        dc = ss.columns[0]
+        if "close" in ss.columns:
+            ss = ss.drop(columns=["close"])
+        ss[dc] = pd.to_datetime(ss[dc], utc=True).dt.strftime("%Y-%m-%d")
+        S.append("<p><i>Sentiment stream (12 features) — FinBERT rolling stats + buy/sell/hold/none signal:</i></p>"
+                 + df_to_html(ss.tail(5).round(4), floatfmt="{:.4f}"))
+
     # ---------------- 4. model input ----------------
     if d["sent"] is not None:
         sent_sample = d["sent"].tail(5)
@@ -436,7 +481,7 @@ headlines exist — "no news" carries different information than "neutral news")
         S.append(f"""
 <h2>4. Input to the Hybrid CNN-LSTM-Transformer</h2>
 <p>Each training sample is a sliding window ({d['window_label']}):</p>
-<pre>X            (60, 26)   — 60 consecutive bars × 26 fused features
+<pre>X            (60, 30)   — 60 consecutive bars × 30 fused features
 y            (10,)      — cumulative log-returns of close at t+1 … t+10 (the target)
 regime_ctx   (2,)       — realised volatility and ATR at the forecast origin
 xgb_pred     (10,)      — the frozen XGBoost expert's forecast for the same window</pre>

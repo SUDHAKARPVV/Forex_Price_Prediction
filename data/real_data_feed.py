@@ -380,6 +380,7 @@ def _fetch_bls_cpi(first_year: int, timeout: int = 30) -> Optional[pd.Series]:
     from datetime import datetime as _dt
 
     frames = []
+    failed_slices = 0
     year = first_year
     this_year = _dt.now().year
     while year <= this_year:
@@ -392,8 +393,17 @@ def _fetch_bls_cpi(first_year: int, timeout: int = 30) -> Optional[pd.Series]:
             )
             payload = resp.json()
             if payload.get("status") != "REQUEST_SUCCEEDED":
-                print(f"[real_data_feed] BLS CPI {year}-{end} failed ({payload.get('status')})")
-                return None
+                # The unregistered BLS v1 tier rejects year ranges that are
+                # too old or exceed its window (REQUEST_NOT_PROCESSED). Skip
+                # the failed slice rather than abandoning the whole series:
+                # CPI YoY over the recent/test period is what matters, and
+                # older bars forward-fill from the earliest slice that did
+                # succeed.
+                print(f"[real_data_feed] BLS CPI {year}-{end} skipped ({payload.get('status')})")
+                failed_slices += 1
+                year = end + 1
+                time.sleep(0.5)
+                continue
             for row in payload["Results"]["series"][0]["data"]:
                 # M01..M12 are calendar months; M13 is the annual average.
                 if not row["period"].startswith("M") or int(row["period"][1:]) > 12:
@@ -405,12 +415,15 @@ def _fetch_bls_cpi(first_year: int, timeout: int = 30) -> Optional[pd.Series]:
                 ts = pd.Timestamp(int(row["year"]), int(row["period"][1:]), 1)
                 frames.append((ts, val))
         except Exception as e:
-            print(f"[real_data_feed] BLS CPI {year}-{end} failed ({type(e).__name__}: {e})")
-            return None
+            print(f"[real_data_feed] BLS CPI {year}-{end} skipped ({type(e).__name__}: {e})")
+            failed_slices += 1
         year = end + 1
         time.sleep(0.5)
     if not frames:
         return None
+    if failed_slices:
+        print(f"[real_data_feed] BLS CPI: {failed_slices} slice(s) unavailable; "
+              f"{len(frames)} monthly points from {min(f[0] for f in frames).date()} onward.")
     s = pd.Series(dict(frames)).sort_index()
     return s
 
