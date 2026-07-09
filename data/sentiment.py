@@ -218,26 +218,35 @@ def score_headlines(df: "pd.DataFrame", scorer: FinBERTSentimentScorer) -> "pd.D
 
 
 def build_sentiment_features(news_df: pd.DataFrame, scorer: FinBERTSentimentScorer) -> pd.DataFrame:
-    """Convert a per-bar table into the 12 sentiment features (8 rolling
-    statistics + 4 one-hot buy/sell/hold/none signal columns).
+    """Convert a per-bar table into the 13 sentiment features (9 rolling
+    statistics -- incl. the diffusion breadth index -- + 4 one-hot
+    buy/sell/hold/none signal columns).
 
     Two input schemas are accepted:
       * PRE-SCORED (preferred): a 'daily_score' column (already the per-bar
-        mean of polarity*confidence over that bar's headlines, from cached
-        per-headline scores) plus 'headline_count'. No FinBERT is run --
-        this is the score-cache fast path.
+        neutral-excluded mean of polarity*confidence, from cached per-headline
+        scores) plus 'headline_count' and (optionally) 'net_sent' (the
+        diffusion breadth index). No FinBERT is run -- the score-cache fast path.
       * RAW: a 'text' column of concatenated headline text plus
         'headline_count'; scored here with FinBERT (synthetic path / tests).
     """
     if "daily_score" in news_df.columns:
         daily_score = news_df["daily_score"].astype(float)
+        # Diffusion breadth (#bull-#bear)/#total; fall back to the sign of the
+        # magnitude score when the aligner didn't provide it (older frames).
+        if "net_sent" in news_df.columns:
+            net_sent = news_df["net_sent"].astype(float)
+        else:
+            net_sent = np.sign(daily_score)
     else:
         texts = news_df["text"].fillna("").tolist()
         scored = scorer.score_batch(texts)
         polarity = np.array([p for p, _ in scored])
         confidence = np.array([c for _, c in scored])
         daily_score = pd.Series(polarity * confidence, index=news_df.index)
+        net_sent = pd.Series(np.sign(polarity), index=news_df.index)   # 1 headline/bar -> sign is the breadth
     daily_score = pd.Series(daily_score.values, index=news_df.index)
+    net_sent = pd.Series(np.asarray(net_sent, dtype=float), index=news_df.index)
     counts = news_df["headline_count"].clip(lower=1)
 
     roll_mean = daily_score.rolling(5, min_periods=1).mean()
@@ -251,6 +260,9 @@ def build_sentiment_features(news_df: pd.DataFrame, scorer: FinBERTSentimentScor
         counts.rolling(20, min_periods=1).std() + 1e-6
     )
     norm_count = norm_count.fillna(0.0)
+    # Smoothed diffusion breadth -- a directional sentiment measure independent
+    # of score magnitude (industry "sentiment breadth"), EWMA-stabilised.
+    sent_diffusion = net_sent.ewm(halflife=3).mean().fillna(0.0)
 
     feats = pd.DataFrame(
         {
@@ -261,6 +273,7 @@ def build_sentiment_features(news_df: pd.DataFrame, scorer: FinBERTSentimentScor
             "sent_decay": decay_mean,
             "sent_momentum": momentum,
             "sent_vol": roll_vol,
+            "sent_diffusion": sent_diffusion,
             "headline_count_z": norm_count,
         },
         index=news_df.index,

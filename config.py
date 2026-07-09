@@ -28,11 +28,11 @@ class DataConfig:
     n_technical_features: int = 12    # OHLC log-returns(4) + RSI + MACD hist + BB width + volume z
                                       # + ATR% + ROC-10 + Stochastic %K + EMA12/26 ratio
     n_macro_features: int = 6         # rate diff, CPI, CB stance, 2 lags, calendar flag
-    n_sentiment_features: int = 12    # 8 FinBERT rolling stats (mean/std/min/max/count/decay/mom/vol)
-                                      # + 4 one-hot buy/sell/hold/none trading-signal features
-                                      # (data/sentiment.py:derive_trading_signals)
+    n_sentiment_features: int = 13    # 9 FinBERT rolling stats (mean/std/min/max/count/decay/mom/vol
+                                      # + diffusion breadth index) + 4 one-hot buy/sell/hold/none
+                                      # trading-signal features (data/sentiment.py:derive_trading_signals)
     n_signal_classes: int = 4         # buy / sell / hold / none -- the LAST 4 sentiment columns
-    n_total_features: int = 30        # must equal sum of streams (30 -> 64 fusion)
+    n_total_features: int = 31        # must equal sum of streams (31 -> 64 fusion)
     train_frac: float = 0.7
     val_frac: float = 0.15
     # test_frac is implicit = 1 - train_frac - val_frac

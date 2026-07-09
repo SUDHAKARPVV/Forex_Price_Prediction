@@ -699,22 +699,27 @@ def align_scored_news_to_bars(bar_index: pd.DatetimeIndex, scored_news: pd.DataF
     pol = ns["polarity"].fillna(0.0).values
     conf = ns["confidence"].fillna(0.0).values
     signed = pol * conf
-    directional = np.abs(pol) >= _NEUTRAL_BAND
+    is_pos = pol >= _NEUTRAL_BAND
+    is_neg = pol <= -_NEUTRAL_BAND
+    directional = is_pos | is_neg
     window = np.timedelta64(int(window_hours * 3600), "s")
     bar_times = bar_index.values.astype("datetime64[ns]")
 
-    out_score, out_count = [], []
+    out_score, out_count, out_diff = [], [], []
     for t in bar_times:
         lo = np.searchsorted(times, t - window, side="left")
         hi = np.searchsorted(times, t, side="right")
-        out_count.append(hi - lo)                     # all headlines feed the count
+        n = hi - lo
+        out_count.append(n)                           # all headlines feed the count
         dmask = directional[lo:hi]
-        if dmask.any():
-            out_score.append(float(signed[lo:hi][dmask].mean()))
-        else:
-            out_score.append(0.0)                     # no directional news -> neutral
+        out_score.append(float(signed[lo:hi][dmask].mean()) if dmask.any() else 0.0)
+        # Diffusion / net-sentiment BREADTH index: (#bullish - #bearish)/#total
+        # -- the RavenPack-style measure, robust to score magnitude and to the
+        # neutral majority (a bar with 3 bullish, 1 bearish -> +0.5).
+        out_diff.append(float((is_pos[lo:hi].sum() - is_neg[lo:hi].sum()) / n) if n else 0.0)
 
-    return pd.DataFrame({"daily_score": out_score, "headline_count": out_count}, index=bar_index)
+    return pd.DataFrame({"daily_score": out_score, "headline_count": out_count,
+                         "net_sent": out_diff}, index=bar_index)
 
 
 # ---------------------------------------------------------------------------
