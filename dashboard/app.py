@@ -34,9 +34,17 @@ st.set_page_config(page_title="Decoding Currency Dynamics — Dashboard",
 
 
 # ----------------------------- cached loaders -----------------------------
-@st.cache_data(show_spinner=False)
 def load_json(path):
+    # NOT cached: JSON summaries are re-read every run so Results always
+    # reflects the latest committed benchmark, not a stale cache.
     return json.load(open(path)) if os.path.exists(path) else None
+
+
+def file_mtime(path):
+    import datetime
+    if os.path.exists(path):
+        return datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
+    return "—"
 
 
 @st.cache_resource(show_spinner="Building feature panel + splits …")
@@ -153,35 +161,90 @@ if page.startswith("🏠"):
     metric_card(c[3], "Input features", f"{DATA_CFG.n_total_features}", AMBER, "technical + macro + sentiment")
 
     st.markdown("")
+    st.subheader("Abstract")
     st.markdown(
-        "This dashboard lets you inspect the dissertation project end-to-end: the **data streams**, the "
-        "**layer-by-layer architecture** with the input/output of every component, **live multi-step forecasts** "
-        "from the trained model, and the **honest benchmark results**. Use the sidebar to navigate.")
+        "Foreign-exchange markets are among the most liquid yet hardest to forecast — prices are driven at once by "
+        "**price action, macroeconomic fundamentals, and market sentiment**, and classical models (ARIMA, GARCH) "
+        "assume linearity and stationarity that currency data routinely violates. This project builds an "
+        "**AI-driven framework for multi-step forecasting of the XAU/USD (gold) exchange rate**. Its core is a "
+        "**Hybrid CNN-LSTM-Transformer** that fuses three real data streams into one model and forecasts the next "
+        "**10 trading days** together with a calibrated uncertainty band — so it predicts not just the move, but "
+        "how confident it is. Every result is measured honestly against classical baselines under a leakage-free, "
+        "regime-aware protocol.")
+
+    st.subheader("What the model does, in one line")
+    st.markdown(
+        f"<div style='background:#0F172A;color:#CBD5E1;border-radius:10px;padding:14px 16px;font-size:14px'>"
+        f"<b style='color:{TEAL_L}'>Price + Macro + News-sentiment</b> &nbsp;→&nbsp; "
+        f"CNN (local patterns) → cross-attention fusion → Transformer (global context) → Bi-LSTM/GRU (memory) "
+        f"→ &nbsp;<b style='color:{TEAL_L}'>10-day forecast + confidence band</b></div>",
+        unsafe_allow_html=True)
+
+    g1, g2 = st.columns(2)
+    with g1:
+        st.subheader("🎯 Goals & objectives")
+        st.markdown(
+            "- Design a **Hybrid CNN-LSTM-Transformer** for multi-step FX forecasting\n"
+            "- Build a **multi-modal fusion pipeline** (technical + macro + FinBERT news sentiment)\n"
+            "- Quantify each component's contribution via **ablation studies**\n"
+            "- Evaluate across **horizons and volatility regimes**, honestly\n"
+            "- Benchmark against **ARIMA / GARCH** with full walk-forward\n"
+            "- Provide a **regime-aware, uncertainty-calibrated** forecast, not just a point estimate")
+    with g2:
+        st.subheader("🔭 Scope & approach")
+        st.markdown(
+            "- Instrument: **XAU/USD (gold)**, daily bars, ~26 years of history\n"
+            "- **31 engineered features** across 3 streams, 60-bar lookback\n"
+            "- **Two-pipeline** design: data extraction/verification, then train/test\n"
+            "- Training: **freeze-and-tune**, Gaussian-NLL heads, modality masking, deep supervision\n"
+            "- Decision layer: **conviction filtering** + costed backtest\n"
+            "- Reproducible, open-source Python stack (PyTorch, FinBERT, XGBoost)")
+
     st.info(
         "**Honest status.** GARCH's momentum drift still leads unfiltered directional accuracy; the Hybrid "
         "(~0.53) narrows the gap with much lower variance, best MAE among deep configs, and adds a probabilistic "
         "conviction layer. The evaluator's target of **0.60** is the current work item — the main lever is denser "
-        "news coverage (currently ~18% of test bars).", icon="ℹ️")
+        "news coverage (currently ~18% of test bars). Use the sidebar to explore the architecture, data, live "
+        "predictions and results.", icon="ℹ️")
 
 
 # ================== 2. ARCHITECTURE & LAYER I/O ==================
 elif page.startswith("🧱"):
     st.title("🧱 Architecture & Layer Input/Output")
     st.markdown(
-        "The Hybrid is a **dual-tower** network. Below is the end-to-end flow, then a **live table of every "
-        "component's input → output tensor shape and parameter count**, captured from a real forward pass "
-        "(batch size B = 1).")
-    st.markdown(
-        f"<div style='background:#0F172A;color:#CBD5E1;border-radius:10px;padding:16px;font-size:13px;line-height:1.9'>"
-        f"<b style='color:{TEAL_L}'>Tower A (quant)</b> &nbsp; input (B,60,18) → Dilated Causal CNN → (B,60,128)<br>"
-        f"<b style='color:{TEAL_L}'>Tower B (text)</b> &nbsp;&nbsp; input (B,60,13) → Sentiment GRU → (B,60,128)<br>"
-        f"<b style='color:{TEAL_L}'>Fusion</b> &nbsp; cross-attention (quant Q, text K/V) + presence gate → (B,60,128)<br>"
-        f"<b style='color:{TEAL_L}'>Global + temporal</b> &nbsp; Transformer → (B,60,256) → Bi-LSTM ∥ Bi-GRU → (B,256)<br>"
-        f"<b style='color:{TEAL_L}'>Output</b> &nbsp; regime-aware probabilistic heads → (μ, σ²) × 10 horizons "
-        f"&nbsp;⊕&nbsp; fused XGBoost expert via trust gate</div>", unsafe_allow_html=True)
-    st.markdown("")
+        "The Hybrid is a **dual-tower** network. Below is the pictorial data-flow with the **tensor shape at every "
+        "hand-off**, then a **live table of every component's input → output shape and parameter count**, captured "
+        "from a real forward pass (batch size B = 1).")
 
-    st.subheader("Live per-component input/output")
+    st.subheader("Pictorial architecture (data flow with shapes)")
+    dot = f"""
+    digraph G {{
+      rankdir=LR; bgcolor="transparent"; splines=ortho;
+      node [shape=box style="rounded,filled" fontname="Helvetica" fontsize=11 color="#CBD5E1" fontcolor="white"];
+      edge [color="#64748B" fontname="Helvetica" fontsize=9 fontcolor="#334155"];
+
+      qin  [label="Quant input\\n(B,60,18)" fillcolor="#94A3B8" fontcolor="#0F172A"];
+      cnn  [label="Dilated Causal CNN\\n(B,60,128)" fillcolor="#1E2738"];
+      tin  [label="Text / sentiment input\\n(B,60,13)" fillcolor="#94A3B8" fontcolor="#0F172A"];
+      gru  [label="Sentiment GRU\\n(B,60,128)" fillcolor="#1E2738"];
+      fuse [label="Cross-Attention Fusion\\n+ presence gate\\n(B,60,128)" fillcolor="#0891B2"];
+      trf  [label="Transformer Encoder\\n(B,60,256)" fillcolor="#1E2738"];
+      rec  [label="Bi-LSTM ∥ Bi-GRU\\n+ attention pool\\n(B,256)" fillcolor="#1E2738"];
+      head [label="Regime-aware heads\\n(μ, σ²) × 10" fillcolor="#059669"];
+      xgb  [label="XGBoost expert\\n(B,10)" fillcolor="#B45309"];
+      out  [label="Forecast + band\\n(B,10)" fillcolor="#1F3759"];
+
+      qin -> cnn [label="Tower A"];
+      tin -> gru [label="Tower B"];
+      cnn -> fuse [label="Query"];
+      gru -> fuse [label="Key/Value"];
+      fuse -> trf; trf -> rec; rec -> head;
+      head -> out [label="deep"];
+      xgb -> out [label="trust gate"];
+    }}"""
+    st.graphviz_chart(dot, use_container_width=True)
+
+    st.subheader("Live per-component input / output shapes")
     try:
         from models.hybrid_model import HybridCNNLSTMTransformer
         m = HybridCNNLSTMTransformer()
@@ -231,6 +294,66 @@ elif page.startswith("📊"):
                 test = dfp.iloc[int(len(dfp)*0.85):]
                 st.metric("Test-set news coverage", f"{(test['sig_none']==0).mean()*100:.1f}%")
             st.metric("Date range", f"{str(dfp['date'].iloc[0])[:10]} → {str(dfp['date'].iloc[-1])[:10]}")
+        st.divider()
+        # ---- Macro indicators ----
+        st.subheader("📉 Macroeconomic indicators (stationary, real feeds)")
+        st.caption("Yahoo rates/dollar-index + BLS CPI, transformed to stationary form and forward-filled onto "
+                   "the daily grid. Shown over the recent window for readability.")
+        macro_present = [m_ for m_ in macro if m_ in dfp.columns]
+        recent = dfp.tail(750)
+        rdts = pd.to_datetime(recent["date"], utc=True, errors="coerce")
+        mfig = go.Figure()
+        palette = [TEAL, NAVY, GREEN, AMBER, "#7C3AED", SLATE]
+        for i, mcol in enumerate(macro_present):
+            mfig.add_trace(go.Scatter(x=rdts, y=recent[mcol], name=mcol,
+                                      line=dict(color=palette[i % len(palette)], width=1.4)))
+        mfig.update_layout(height=300, template="plotly_white", margin=dict(l=0, r=0, t=10, b=0),
+                           legend=dict(orientation="h", y=1.12), yaxis_title="stationary value")
+        st.plotly_chart(mfig, use_container_width=True)
+
+        st.divider()
+        # ---- FinBERT sentiment scoring ----
+        st.subheader("🗞️ FinBERT news-sentiment scoring")
+        s1, s2 = st.columns([3, 2])
+        with s1:
+            st.markdown("**Per-bar sentiment signal** (decayed score + diffusion breadth), recent window")
+            sfig = go.Figure()
+            if "sent_decay" in dfp.columns:
+                sfig.add_trace(go.Scatter(x=rdts, y=recent["sent_decay"], name="sent_decay (EWMA)",
+                                          line=dict(color=TEAL, width=1.6)))
+            if "sent_diffusion" in dfp.columns:
+                sfig.add_trace(go.Scatter(x=rdts, y=recent["sent_diffusion"], name="diffusion breadth",
+                                          line=dict(color=AMBER, width=1.4)))
+            # buy / sell markers
+            for col, nm, col_c, sym in (("sig_buy", "BUY", GREEN, "triangle-up"),
+                                        ("sig_sell", "SELL", "#DC2626", "triangle-down")):
+                if col in recent.columns:
+                    mk = recent[col] == 1
+                    if mk.any():
+                        sfig.add_trace(go.Scatter(x=rdts[mk.values], y=recent.loc[mk, "sent_decay"] if "sent_decay" in recent else recent.loc[mk, col]*0,
+                                                  mode="markers", name=nm,
+                                                  marker=dict(color=col_c, size=8, symbol=sym)))
+            sfig.add_hline(y=0, line_dash="dot", line_color=SLATE)
+            sfig.update_layout(height=300, template="plotly_white", margin=dict(l=0, r=0, t=10, b=0),
+                               legend=dict(orientation="h", y=1.12), yaxis_title="sentiment")
+            st.plotly_chart(sfig, use_container_width=True)
+        with s2:
+            st.markdown("**FinBERT per-headline polarity** (whole news archive)")
+            arch = "exports/archive/news_GCF.csv"
+            if os.path.exists(arch):
+                a = pd.read_csv(arch)
+                if "polarity" in a.columns:
+                    hfig = go.Figure(go.Histogram(x=a["polarity"].dropna(), nbinsx=30, marker_color=TEAL))
+                    hfig.update_layout(height=300, template="plotly_white", margin=dict(l=0, r=0, t=10, b=0),
+                                       xaxis_title="polarity  (−1 bearish → +1 bullish)", yaxis_title="headlines")
+                    st.plotly_chart(hfig, use_container_width=True)
+                    npos = int((a["polarity"] >= 0.15).sum()); nneg = int((a["polarity"] <= -0.15).sum())
+                    st.caption(f"{len(a):,} scored headlines · {npos:,} bullish · {nneg:,} bearish · "
+                               f"{len(a)-npos-nneg:,} neutral")
+            else:
+                st.caption("News archive not present in this deployment.")
+
+        st.divider()
         st.subheader("Most recent engineered features")
         st.dataframe(dfp[["date"] + feat_cols].tail(8), use_container_width=True, hide_index=True)
 
@@ -248,24 +371,41 @@ elif page.startswith("🔮"):
     origins = test_ds.indices
     dates = [str(panel.dates[t])[:10] for t in origins]
 
-    st.markdown("Pick a forecast origin from the **test set** (unseen data). The model predicts the next "
-                "10 daily log-return steps with an uncertainty band, then we compare to what actually happened.")
-    idx = st.slider("Test-set forecast origin", 0, n - 1, n - 1,
-                    format="%d", help="Rightmost = most recent test bar")
-    st.caption(f"Origin date: **{dates[idx]}**  ·  test window {idx+1} of {n}")
+    st.markdown("Pick a forecast origin from the **test set** (unseen data), then press **FX Price Predict** — "
+                "the trained model runs a live forward pass and predicts the next 10 daily log-return steps with an "
+                "uncertainty band, which we compare to what actually happened.")
+    cpick, cbtn = st.columns([3, 1])
+    with cpick:
+        idx = st.slider("Test-set forecast origin", 0, n - 1, n - 1,
+                        format="%d", help="Rightmost = most recent test bar")
+        st.caption(f"Origin date: **{dates[idx]}**  ·  test window {idx+1} of {n}")
+    with cbtn:
+        st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
+        go_pred = st.button("🔮 FX Price Predict", type="primary", use_container_width=True)
 
-    x_quant, x_text, y, regime_ctx, xgb_pred = test_x[idx]
-    xb = {k: v.unsqueeze(0) for k, v in
-          dict(x_quant=x_quant, x_text=x_text, regime_ctx=regime_ctx, xgb_pred=xgb_pred).items()}
-    hybrid.eval()
-    with torch.no_grad():
-        out = hybrid(xb["x_quant"], xb["x_text"], xb["regime_ctx"], xb["xgb_pred"])
-    forecast = out["forecast"][0].numpy() if isinstance(out, dict) else out[0].numpy()
-    band = None
-    if isinstance(out, dict) and out.get("band") is not None:
-        band = out["band"][0].numpy()
-    actual = y.numpy()
+    # Run inference only on button click; persist the result across reruns.
+    if go_pred:
+        x_quant, x_text, y, regime_ctx, xgb_pred = test_x[idx]
+        xb = {k: v.unsqueeze(0) for k, v in
+              dict(x_quant=x_quant, x_text=x_text, regime_ctx=regime_ctx, xgb_pred=xgb_pred).items()}
+        hybrid.eval()
+        with torch.no_grad():
+            out = hybrid(xb["x_quant"], xb["x_text"], xb["regime_ctx"], xb["xgb_pred"])
+        fc = out["forecast"][0].numpy() if isinstance(out, dict) else out[0].numpy()
+        bd = out["band"][0].numpy() if isinstance(out, dict) and out.get("band") is not None else None
+        st.session_state["live_pred"] = {
+            "idx": idx, "date": dates[idx], "forecast": fc, "band": bd,
+            "actual": y.numpy(), "xgb1": float(xgb_pred[0].item()),
+            "layers": capture_layer_io(hybrid, xb["x_quant"], xb["x_text"], xb["regime_ctx"], xb["xgb_pred"]),
+        }
 
+    if "live_pred" not in st.session_state:
+        st.info("Press **🔮 FX Price Predict** to run the model on the selected date.", icon="👆")
+        st.stop()
+
+    P = st.session_state["live_pred"]
+    forecast, band, actual = P["forecast"], P["band"], P["actual"]
+    st.success(f"Prediction for origin **{P['date']}** (test window {P['idx']+1} of {n})")
     h = np.arange(1, DATA_CFG.horizon + 1)
     fig = go.Figure()
     if band is not None:
@@ -286,19 +426,25 @@ elif page.startswith("🔮"):
     metric_card(c[0], "1-step direction", sig, GREEN if sig == "BUY" else AMBER)
     metric_card(c[1], "Directional hit-rate", f"{dir_hit*100:.0f}%", TEAL, "this window, 10 horizons")
     metric_card(c[2], "Conviction |μ|/σ", f"{conv:.2f}", NAVY, "t-statistic of the 1-step move")
-    metric_card(c[3], "XGBoost expert (1-step)", f"{xgb_pred[0].item():+.4f}", SLATE, "fused internal expert")
+    metric_card(c[3], "XGBoost expert (1-step)", f"{P['xgb1']:+.4f}", SLATE, "fused internal expert")
 
     with st.expander("🔬 Per-layer output shapes for THIS prediction"):
-        rows = capture_layer_io(hybrid, xb["x_quant"], xb["x_text"], xb["regime_ctx"], xb["xgb_pred"])
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(P["layers"]), use_container_width=True, hide_index=True)
 
 
 # ===================== 5. RESULTS & BASELINES =====================
 elif page.startswith("📈"):
     st.title("📈 Results & Baselines")
+    hc, rc = st.columns([4, 1])
+    hc.caption(f"Live from the latest committed benchmark · `multi_seed_summary.json` updated "
+               f"**{file_mtime('multi_seed_summary.json')}**. Re-run `python run_multi_seed.py --source panel` "
+               f"to refresh the numbers, then reload.")
+    if rc.button("🔄 Refresh", use_container_width=True):
+        st.cache_resource.clear(); st.rerun()
     if not summ:
         st.error("multi_seed_summary.json not found — run `python run_multi_seed.py --source panel`.")
     else:
+        n_test = (meta.get("split", {}).get("test") if meta else None) or 962
         nice = {"Hybrid_CNN_LSTM_Transformer": "Hybrid CNN-LSTM-Transformer",
                 "GARCH": "GARCH (AR1-GARCH1,1)", "ARIMA": "ARIMA (walk-forward)"}
         rows = []
@@ -310,7 +456,7 @@ elif page.startswith("📈"):
                              "MAE": round(summ[k]["MAE"]["mean"], 5),
                              "RMSE": round(summ[k]["RMSE"]["mean"], 5)})
         df = pd.DataFrame(rows).sort_values("DirAcc (mean)", ascending=False)
-        st.subheader("Walk-forward comparison (962 test windows, 3 seeds)")
+        st.subheader(f"Walk-forward comparison ({n_test} test windows, 3 seeds)")
         st.dataframe(df, use_container_width=True, hide_index=True)
 
         vals = {nice[k]: summ[k]["DirectionalAccuracy"]["values"] for k in nice if k in summ}
