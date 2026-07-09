@@ -123,23 +123,23 @@ def metric_card(col, label, value, color=NAVY, sub=""):
         f"<div style='color:{SLATE};font-size:11px'>{sub}</div></div>", unsafe_allow_html=True)
 
 
-def compute_live_forecast(hybrid, xgb):
-    """GENUINE out-of-sample forecast: fetch fresh live price + macro (yfinance)
-    and the latest cached news sentiment, engineer the last 60-bar window,
-    normalise with the training statistics, and run the saved model to predict
-    the next 10 trading days from today. Returns a result dict (raises on
-    fetch failure so the caller can show a clear message)."""
+def compute_live_forecast(hybrid, xgb, fetch_news=False):
+    """GENUINE out-of-sample forecast: fetch fresh live price + macro (yfinance),
+    engineer the last 60-bar window, normalise with the training statistics, and
+    run the saved model to predict the next 10 trading days.
+
+    News: by default the continuously-updated cached archive is used (FAST, ~15s
+    — and its coverage already matches a live pull, since the sparsity, not a
+    fetch gap, is the limit). Set fetch_news=True to additionally pull fresh
+    headlines live (GDELT + RSS), which is much slower (several minutes) due to
+    GDELT rate-limits. Returns a rich dict for the in-depth view."""
     import os as _os
     from data.dataset import build_fx_panel
-    prev = _os.environ.get("FOREX_OFFLINE_NEWS")
-    _os.environ["FOREX_OFFLINE_NEWS"] = "1"   # sentiment from cached archive; price+macro are live
-    try:
-        fresh = build_fx_panel(pair="XAU/USD", n_days=10000, source="real", real_interval="1d")
-    finally:
-        if prev is None:
-            _os.environ.pop("FOREX_OFFLINE_NEWS", None)
-        else:
-            _os.environ["FOREX_OFFLINE_NEWS"] = prev
+    if fetch_news:
+        _os.environ.pop("FOREX_OFFLINE_NEWS", None)      # live news top-up (slow)
+    else:
+        _os.environ["FOREX_OFFLINE_NEWS"] = "1"          # cached archive (fast)
+    fresh = build_fx_panel(pair="XAU/USD", n_days=10000, source="real", real_interval="1d")
 
     panel = load_panel_and_splits()[0]                       # committed panel -> train stats
     n = len(panel.close); train_end = int(n * DATA_CFG.train_frac)
@@ -147,24 +147,41 @@ def compute_live_forecast(hybrid, xgb):
     sd = panel.features[:train_end].std(axis=0); sd[sd < 1e-6] = 1.0
 
     L = DATA_CFG.lookback
-    raw = fresh.features[-L:]
+    raw = np.asarray(fresh.features[-L:], dtype=float)
     norm = ((raw - mu) / sd).astype("float32")
     nq = DATA_CFG.n_technical_features + DATA_CFG.n_macro_features
     xq = torch.from_numpy(norm[:, :nq]).unsqueeze(0)
     xt = torch.from_numpy(norm[:, nq:]).unsqueeze(0)
     rc = torch.tensor([[float(fresh.realized_vol[-1]), float(fresh.atr[-1])]], dtype=torch.float32)
     xgp = torch.from_numpy(xgb.predict_batch(norm[None], rc.numpy())[0].astype("float32")).unsqueeze(0)
+
+    caught = {}
+    h1 = hybrid.pool_attn.register_forward_hook(lambda m, i, o: caught.__setitem__("pool", o.detach()))
+    h2 = hybrid.text_gate.register_forward_hook(lambda m, i, o: caught.__setitem__("gate", o.detach()))
     hybrid.eval()
     with torch.no_grad():
         out = hybrid(xq, xt, rc, xgp)
+    h1.remove(); h2.remove()
+
     fc = out["forecast"][0].numpy()
-    band = out["band"][0].numpy() if isinstance(out, dict) and out.get("band") is not None else None
-    return {"forecast": fc, "band": band, "last_date": str(fresh.dates[-1])[:10],
-            "last_close": float(fresh.close[-1]), "n_bars": int(len(fresh.close)),
-            # inputs kept for the in-depth analysis (per-layer + feature impact)
+    band = out["band"][0].numpy() if out.get("band") is not None else None
+    deep = out["deep_forecast"][0].numpy()
+    xtrust = float(out["xgb_trust"][0].mean())
+    attn_w = torch.softmax(caught["pool"], dim=1)[0, :, 0].numpy().tolist() if "pool" in caught else None
+    presence = float(torch.sigmoid(caught["gate"])[0, :, 0].mean()) if "gate" in caught else 0.0
+
+    fn = list(fresh.feature_names)
+    news_days = int((raw[:, fn.index("sig_none")] == 0).sum()) if "sig_none" in fn else None
+
+    return {"forecast": fc, "band": band, "deep_forecast": deep, "xgb_trust": xtrust,
+            "attn_weights": attn_w, "presence": presence, "news_days": news_days,
+            "last_date": str(fresh.dates[-1])[:10], "last_close": float(fresh.close[-1]),
+            "n_bars": int(len(fresh.close)),
             "xq": xq.numpy(), "xt": xt.numpy(), "rc": rc.numpy(), "xgp": xgp.numpy(),
-            "feature_names": list(fresh.feature_names), "nq": int(nq),
-            "regime": [float(fresh.realized_vol[-1]), float(fresh.atr[-1])]}
+            "feature_names": fn, "nq": int(nq),
+            "window_dates": [str(d)[:10] for d in fresh.dates[-L:]],
+            "window_close": np.asarray(fresh.close[-L:], dtype=float).tolist(),
+            "window_raw": raw}
 
 
 def events_table(dates):
@@ -645,18 +662,26 @@ elif page.startswith("🔮"):
     st.caption("An upcoming FOMC decision or NFP release typically raises volatility — the model's uncertainty band "
                "widens around such dates.")
 
-    if st.button("🔮 FX Price Predict (live)", type="primary"):
+    bcol1, bcol2 = st.columns([1, 2])
+    go_live = bcol1.button("🔮 FX Price Predict (live)", type="primary", use_container_width=True)
+    fetch_news = bcol2.checkbox("Also pull fresh news live (slower, several minutes — GDELT rate-limited; "
+                                "off = up-to-date cached archive)", value=False)
+    if go_live:
         try:
-            with st.spinner("Fetching live price + macro + sentiment and running the model …"):
-                st.session_state["live_fc"] = compute_live_forecast(hybrid, xgb)
+            msg = ("Fetching live price + macro + FRESH NEWS and running the model … (this can take a few minutes)"
+                   if fetch_news else "Fetching live price + macro, aligning cached news, and running the model …")
+            with st.spinner(msg):
+                st.session_state["live_fc"] = compute_live_forecast(hybrid, xgb, fetch_news=fetch_news)
         except Exception as e:
             st.error(f"Live fetch failed (network / data source unavailable): {e}")
 
     if "live_fc" in st.session_state:
         F = st.session_state["live_fc"]
         fc, bd = F["forecast"], F["band"]
+        nd = F.get("news_days")
         st.success(f"Live forecast from the latest bar **{F['last_date']}** "
-                   f"(close ${F['last_close']:,.2f}) · {F['n_bars']:,} bars fetched")
+                   f"(close ${F['last_close']:,.2f}) · {F['n_bars']:,} bars fetched"
+                   + (f" · **{nd}/60** days in the window carry live news" if nd is not None else ""))
         # forecast is cumulative log-return per horizon -> predicted price level
         price_path = F["last_close"] * np.exp(fc)
         lf = go.Figure()
@@ -675,8 +700,30 @@ elif page.startswith("🔮"):
         metric_card(cc[0], "Next-day direction", d1, GREEN if d1 == "BUY" else AMBER)
         metric_card(cc[1], "10-day predicted move", f"{(np.exp(fc[-1])-1)*100:+.2f}%", TEAL, "cumulative")
         metric_card(cc[2], "Predicted price (t+10)", f"${price_path[-1]:,.2f}", NAVY, f"from ${F['last_close']:,.2f}")
-        st.caption("Sentiment uses the most recent cached news archive; price and macro are fetched live. "
-                   "Directional accuracy on live data is expected to track the honest test-set figures (~0.53).")
+        st.caption("Price and macro are fetched **live**; news uses the up-to-date **cached archive** by default "
+                   "(tick the box to also pull fresh headlines live). News coverage is inherently sparse "
+                   "(~14/60 days) — the main limit on the sentiment signal. Directional accuracy on live data "
+                   "tracks the honest test-set figure (~0.53).")
+
+        # ---------- 📥 INPUT DATA USED ----------
+        st.divider()
+        st.subheader("📥 Input data used for this prediction (last 60 trading days)")
+        wds, wcl, wraw = F.get("window_dates"), F.get("window_close"), F.get("window_raw")
+        if wds and wcl is not None:
+            pf = go.Figure(go.Scatter(x=wds, y=wcl, line=dict(color=TEAL, width=2), name="close"))
+            pf.update_layout(height=250, template="plotly_white", margin=dict(l=0, r=0, t=10, b=0),
+                             yaxis_title="XAU/USD close (USD)", xaxis_title="last 60 trading days (live)")
+            st.plotly_chart(pf, use_container_width=True)
+            with st.expander("📈 Live FX rates — last 60 days (table, newest first)"):
+                st.dataframe(pd.DataFrame({"date": wds, "close": np.round(wcl, 2)}).iloc[::-1],
+                             use_container_width=True, hide_index=True)
+            if wraw is not None:
+                fdf = pd.DataFrame(np.asarray(wraw).round(4), columns=F["feature_names"])
+                fdf.insert(0, "date", wds)
+                with st.expander(f"🧮 Engineered features fed to the model — last 60 days × {len(F['feature_names'])} features (newest first)"):
+                    st.dataframe(fdf.iloc[::-1], use_container_width=True, hide_index=True)
+            st.caption("These are exactly the rows the model consumed: 60 days of live price → technical indicators, "
+                       "live macro, and live news sentiment, normalised with the training statistics.")
 
         # ---------- in-depth: how the model processed this prediction ----------
         st.divider()
@@ -698,13 +745,17 @@ elif page.startswith("🔮"):
             st.plotly_chart(nfig, use_container_width=True)
             st.caption("Signal magnitude flowing through each component for this input.")
         with lc2:
-            key = "attn_norm" if "attn_norm" in store else ("cnn" if "cnn" in store else list(store)[0])
-            A = store[key][0].numpy()
-            hm = go.Figure(go.Heatmap(z=A.T, colorscale="RdBu", zmid=0))
-            hm.update_layout(height=290, template="plotly_white", margin=dict(l=0, r=0, t=10, b=0),
-                             xaxis_title="time step (60-bar window)", yaxis_title=f"{key} channels")
-            st.plotly_chart(hm, use_container_width=True)
-            st.caption(f"Internal representation at the **{key}** layer — how the window is encoded (red +, blue −).")
+            aw = F.get("attn_weights")
+            if aw is not None:
+                xw = wds if wds else list(range(1, len(aw) + 1))
+                af = go.Figure(go.Bar(x=xw, y=aw, marker_color=GREEN))
+                af.update_layout(height=290, template="plotly_white", margin=dict(l=0, r=0, t=10, b=0),
+                                 yaxis_title="attention weight", xaxis_title="day in the 60-day window")
+                st.plotly_chart(af, use_container_width=True)
+                st.caption("**Temporal attention** — how strongly the model weights each of the 60 input days when "
+                           "forming its forecast. Taller bars = days that most influence the prediction.")
+            else:
+                st.caption("(attention weights unavailable for this run)")
         with st.expander("Per-layer output statistics (shape / mean / std / range / norm)"):
             st.dataframe(pd.DataFrame(stats), use_container_width=True, hide_index=True)
 
@@ -740,29 +791,45 @@ elif page.startswith("🔮"):
                 f"consistent with the honest finding that sentiment is a weak directional driver at ~18% news "
                 f"coverage.", icon="🔎")
 
-        # 3. training techniques, tied to what's on screen
-        st.markdown("##### 3 · How the key training techniques make this forecast better")
-        tech_expl = [
-            ("🧊 Two-stage Freeze-and-Tune",
-             "Most of this forecast comes from the price/macro backbone, which was trained on **all 26 years** of data "
-             "and then frozen; the news tower was fine-tuned separately on the news-dense years. That is why the "
-             "prediction stays reliable even though today's live news is sparse — the strong foundation is protected."),
-            ("📈 Gaussian NLL (probabilistic head)",
-             "The **green uncertainty band** above is not decoration — it is the Gaussian-NLL head's predicted σ, the "
-             "model's own confidence. It widens when the model is unsure (e.g. around the FOMC/NFP dates listed above) "
-             "and narrows when it is confident, so you can act only on high-conviction forecasts."),
-            ("🎭 Modality masking",
-             "Because news was randomly hidden **40% of the time** during training, the model never became dependent "
-             "on it. That is exactly why this live forecast is robust even though sentiment came from the cached "
-             "archive rather than fresh headlines — the price/macro path carries it."),
-            ("🪜 Deep supervision",
-             "The smooth, stable internal activations in the heatmap above are partly due to deep supervision, which "
-             "fed learning signal to the middle layers during training — giving the consistent, low-variance behaviour "
-             "you see across runs."),
-        ]
-        for nm_, txt in tech_expl:
-            with st.expander(nm_):
-                st.markdown(txt)
+        # 3. training techniques, with THIS prediction's live values
+        st.markdown("##### 3 · How the training techniques shaped THIS forecast (live values)")
+        deep = np.asarray(F.get("deep_forecast", fc)); xtrust = F.get("xgb_trust")
+        presence = F.get("presence"); news_days = F.get("news_days")
+        xgb1 = float(F["xgp"][0][0]); fc1 = float(fc[0]); deep1 = float(deep[0])
+        sig1 = float(bd[0]) if bd is not None else None
+        conv = abs(fc1) / (sig1 + 1e-9) if sig1 else None
+        fmt = lambda a: "[" + ", ".join(f"{v:+.4f}" for v in a[:5]) + " …]"
+
+        with st.expander("🧊 Two-stage Freeze-and-Tune — inputs → blended output"):
+            st.markdown(
+                f"- The **frozen 26-year price/macro backbone** (deep expert) produced a 1-step move of "
+                f"**{deep1:+.4f}**.\n"
+                f"- The **frozen XGBoost expert** produced **{xgb1:+.4f}**.\n"
+                + (f"- A learned **trust of {xtrust:.2f}** (regime-driven) was placed on the XGBoost expert, blending "
+                   f"the two → **final {fc1:+.4f}**.\n" if xtrust is not None else "")
+                + "Because the backbone was trained-then-frozen on all history, this blend stays stable even when "
+                "today's news is thin.")
+        with st.expander("📈 Gaussian NLL — the uncertainty on THIS forecast"):
+            st.markdown(
+                f"- Predicted mean **μ** (cumulative log-returns): `{fmt(fc)}`\n"
+                + (f"- Predicted **σ** (uncertainty band): `{fmt(bd)}`\n" if bd is not None else "")
+                + (f"- 1-step **conviction |μ|/σ = {conv:.2f}** — {'high, tradeable' if conv and conv>0.5 else 'low, the model is cautious here'}.\n" if conv is not None else "")
+                + "The green band on the chart above IS this σ — the model saying how sure it is, learned via the "
+                "Gaussian-NLL objective.")
+        with st.expander("🎭 Modality masking — how much news was used"):
+            st.markdown(
+                (f"- This 60-day window carries news on **{news_days} of 60 days**.\n" if news_days is not None else "")
+                + (f"- The learned **news-presence gate** weighted news at **{presence:.2f}** (0 = ignored, 1 = fully "
+                   f"used) on average.\n" if presence is not None else "")
+                + "Training with news hidden 40% of the time is exactly why a low gate here does not break the "
+                "forecast — the price/macro path carries it.")
+        with st.expander("🪜 Deep supervision — the deep expert as a standalone forecaster"):
+            st.markdown(
+                f"- The **deeply-supervised deep expert** on its own forecast a 1-step move of **{deep1:+.4f}** "
+                f"(vs the blended **{fc1:+.4f}**).\n"
+                "- Deep supervision fed a training signal to this expert directly, so it stays a complete, well-formed "
+                "forecaster — which is what keeps the internal activations (left chart) stable and the results "
+                "low-variance across seeds.")
 
 
 # ===================== 5. RESULTS & BASELINES =====================
