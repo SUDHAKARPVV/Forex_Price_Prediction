@@ -598,6 +598,47 @@ own parts. ARIMA/GARCH are deterministic (no seed variance). The <b>seed-ensembl
 {df_to_html(comp, max_rows=10, floatfmt="{:.4f}")}
 """)
 
+        # ---- 6a. ablation: sentiment diffusion feature ----
+        # Same-seed A/B from git history (commits bf70097 vs 9d98746). The ONLY
+        # change between those two runs is the addition of the sent_diffusion
+        # feature (config 12->13 / 30->31, net_sent emission, sent_diffusion
+        # builder); the neutral-excluded aggregation and adaptive buy/sell
+        # signals were already present in BOTH runs.
+        abl = pd.DataFrame([
+            {"Configuration": "Without sent_diffusion (30 feat)", "seed 9": 0.4952,
+             "seed 36": 0.5021, "seed 99": 0.5045, "DirAcc mean": 0.5006,
+             "DirAcc std": 0.0039, "MAE": 0.02291},
+            {"Configuration": "With sent_diffusion (31 feat)", "seed 9": 0.5337,
+             "seed 36": 0.5355, "seed 99": 0.5342, "DirAcc mean": 0.5345,
+             "DirAcc std": 0.0008, "MAE": 0.02209},
+        ])
+        S.append(f"""
+<h3>6a. Ablation — contribution of the sentiment diffusion feature</h3>
+<p>To confirm the <code>sent_diffusion</code> feature (the RavenPack-style
+net-sentiment breadth index, <i>(#bullish − #bearish)/#total</i>) is genuinely
+responsible for the Hybrid's directional-accuracy gain, the model was trained
+<b>with and without</b> that single feature on the <b>same three seeds
+(9 / 36 / 99)</b> and the same data. This is a controlled A/B: the only change
+between the two runs is the feature itself.</p>
+{df_to_html(abl, floatfmt="{:.4f}")}
+<p>All three seeds improve by <b>~3–4 percentage points</b> (mean DirAcc
+<b>0.5006 → 0.5345</b>, +3.4 pp) and MAE falls (0.02291 → 0.02209). The
+per-seed variance also <b>collapses</b> (±0.0039 → ±0.0008): a uniform shift
+across independent seeds is the signature of a real effect, not sampling noise.
+The panel differs by a single bar between the two runs (962 vs 963 test
+windows) — far too small to explain a ~34-window swing — so the improvement is
+attributable to the feature.</p>
+<p class="small"><b>Honest caveat.</b> The tabular XGBoost expert assigns
+<code>sent_diffusion</code> ~0.000 importance, so the gain lives entirely in the
+<b>deep pathway</b> (the CNN / text tower), not the tree ensemble. This A/B
+confirms the <i>feature</i> is responsible, but does not separate whether the
+lift comes from the diffusion <i>signal</i> itself or from simply adding an
+extra input <i>channel</i> (a mild capacity / regularisation effect). The
+definitive test is a placebo run — replace the column with equal-width random
+noise; if DirAcc stays ~0.50 the signal is doing the work. That is flagged as
+future ablation.</p>
+""")
+
     # ---------------- 7. graphs ----------------
     S.append(f"""
 <h2>7. Comparison graphs — which model wins where</h2>
