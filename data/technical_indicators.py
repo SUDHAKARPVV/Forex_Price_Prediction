@@ -96,6 +96,19 @@ def compute_technical_features(ohlc: pd.DataFrame) -> pd.DataFrame:
     ema26 = close.ewm(span=26, adjust=False).mean()
     ema_ratio = np.log(ema12 / ema26).fillna(0.0)
 
+    # --- Drift features (the conditional-mean signal a GARCH/AR(1) baseline
+    # exploits). The walk-forward benchmark showed GARCH's directional edge
+    # is almost entirely its estimated drift on this trending series; these
+    # hand the same state variable to the network directly instead of asking
+    # it to rediscover the statistic from 60 raw return bars. All rolling,
+    # causal (data up to and including bar t; targets start at t+1).
+    drift_5 = ret_c.rolling(5, min_periods=1).mean().fillna(0.0)
+    drift_21 = ret_c.rolling(21, min_periods=1).mean().fillna(0.0)
+    drift_60 = ret_c.rolling(60, min_periods=1).mean().fillna(0.0)
+    # normalised drift strength: mean/std over 21 bars -- a t-statistic-like
+    # trend-quality measure (high = persistent trend, low = chop).
+    drift_tstat = (drift_21 / (ret_c.rolling(21, min_periods=2).std() + 1e-9)).fillna(0.0)
+
     feats = pd.DataFrame(
         {
             "ret_open": ret_o,
@@ -110,6 +123,10 @@ def compute_technical_features(ohlc: pd.DataFrame) -> pd.DataFrame:
             "roc_10": roc_10,
             "stoch_k": stoch,
             "ema_ratio": ema_ratio,
+            "drift_5": drift_5,
+            "drift_21": drift_21,
+            "drift_60": drift_60,
+            "drift_tstat": drift_tstat,
         },
         index=ohlc.index,
     )
