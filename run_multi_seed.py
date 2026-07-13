@@ -116,6 +116,82 @@ def build_consensus_filter(seeds, model="Hybrid_CNN_LSTM_Transformer", cost_bps=
     }
 
 
+def build_trend_gated_committee(seeds, model="Hybrid_CNN_LSTM_Transformer"):
+    """Trend-Gated Committee (TGC) -- the selective-accuracy headline.
+
+    Trade only when (a) the Hybrid seed-ensemble and the GARCH expert AGREE on
+    the sign, and (b) the trend-quality gate is open: |drift_tstat| at the
+    origin >= the TRAIN-split top-tercile threshold. Both components are
+    parameter-free or train-calibrated -- nothing is tuned on the test set.
+    Reports origin-level (h1-agreement, all-horizon scoring) and per-horizon
+    committee variants, plus split-half robustness. Returns dict or None.
+    """
+    import os
+
+    import pandas as pd
+
+    frames = []
+    for s in seeds:
+        p = f"exports/predictions_test_{model}_seed{s}.csv"
+        if not os.path.exists(p):
+            return None
+        frames.append(pd.read_csv(p))
+    gp = f"exports/predictions_test_GARCH_seed{seeds[0]}.csv"
+    if not (os.path.exists(gp) and os.path.exists("exports/feature_panel.csv")):
+        return None
+    g = pd.read_csv(gp)
+    panel = pd.read_csv("exports/feature_panel.csv")
+    if "drift_tstat" not in panel.columns or len(g) != len(frames[0]):
+        return None
+
+    pmap = dict(zip(panel["date"].astype(str).str[:10], panel["drift_tstat"]))
+    origins = [str(o)[:10] for o in frames[0]["origin"]]
+    dt = np.array([pmap.get(o, np.nan) for o in origins])
+    thr = float(panel["drift_tstat"].iloc[: int(len(panel) * 0.70)].abs().quantile(2 / 3))
+    strong = np.abs(dt) >= thr
+    n = len(origins)
+
+    hens1 = np.mean([f["pred_h1"].values for f in frames], axis=0)
+    ruleD = strong & (np.sign(hens1) == np.sign(g["pred_h1"].values))
+
+    def allh(mask):
+        out = []
+        for hh in range(1, 11):
+            ge = g[f"pred_h{hh}"].values
+            ae = frames[0][f"actual_h{hh}"].values
+            out.append(np.sign(ge[mask]) == np.sign(ae[mask]))
+        return np.concatenate(out)
+
+    # per-horizon committee: (origin,horizon) pairs where ensemble & GARCH agree
+    hits, total = [], 0
+    for hh in range(1, 11):
+        pe = np.mean([f[f"pred_h{hh}"].values for f in frames], axis=0)
+        ge = g[f"pred_h{hh}"].values
+        ae = frames[0][f"actual_h{hh}"].values
+        m = strong & (np.sign(pe) == np.sign(ge))
+        hits.append(np.sign(ge[m]) == np.sign(ae[m]))
+        total += int(m.sum())
+    ph = np.concatenate(hits)
+
+    half = n // 2
+    m1 = ruleD.copy(); m1[half:] = False
+    m2 = ruleD.copy(); m2[:half] = False
+    return {
+        "train_tstat_threshold": thr,
+        "strong_trend_coverage": float(strong.mean()),
+        "origin_rule": {
+            "diracc": float(allh(ruleD).mean()), "coverage": float(ruleD.mean()),
+            "n_origins": int(ruleD.sum()),
+            "diracc_half1": float(allh(m1).mean()) if m1.any() else None,
+            "diracc_half2": float(allh(m2).mean()) if m2.any() else None,
+        },
+        "per_horizon_committee": {
+            "diracc": float(ph.mean()), "pair_coverage": float(total / (n * 10)),
+            "n_pairs": int(total),
+        },
+    }
+
+
 def multi_seed_evaluation(seeds, **run_kwargs):
     all_runs = []
     for seed in seeds:
@@ -177,6 +253,14 @@ def multi_seed_evaluation(seeds, **run_kwargs):
     roadmap["feature_importance"] = (
         all_runs[0][hybrid_key].get("xgb_feature_importance") if hybrid_key in all_runs[0] else None
     )
+
+    tgc = build_trend_gated_committee(seeds)
+    roadmap["trend_gated_committee"] = tgc
+    if tgc:
+        o, p = tgc["origin_rule"], tgc["per_horizon_committee"]
+        print(f"[TGC] trend-gated committee: origin-rule DirAcc {o['diracc']:.4f} at "
+              f"{o['coverage']*100:.1f}% coverage (halves {o['diracc_half1']:.3f}/{o['diracc_half2']:.3f}); "
+              f"per-horizon committee DirAcc {p['diracc']:.4f} at {p['pair_coverage']*100:.1f}% pair coverage")
 
     consensus = build_consensus_filter(seeds)
     roadmap["consensus"] = consensus

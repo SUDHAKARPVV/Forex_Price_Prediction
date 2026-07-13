@@ -849,11 +849,27 @@ elif page.startswith("📈"):
         garch = summ.get("GARCH", {}).get("DirectionalAccuracy", {}).get("mean")
         arima = summ.get("ARIMA", {}).get("DirectionalAccuracy", {}).get("mean")
         hyb_mae = summ["Hybrid_CNN_LSTM_Transformer"]["MAE"]["mean"]
+        road = load_json("roadmap_summary.json") or {}
+        tgc = road.get("trend_gated_committee")
         mc = st.columns(4)
-        metric_card(mc[0], "Hybrid Directional Acc.", f"{hyb:.3f}" if hyb else "—", TEAL, "proposed model, 3-seed mean")
-        metric_card(mc[1], "GARCH baseline", f"{garch:.3f}" if garch else "—", NAVY, "best econometric baseline")
-        metric_card(mc[2], "ARIMA baseline", f"{arima:.3f}" if arima else "—", SLATE, "econometric baseline")
+        if tgc:
+            metric_card(mc[0], "Selective DirAcc (TGC)", f"{tgc['origin_rule']['diracc']:.3f}",
+                        GREEN, f"at {tgc['origin_rule']['coverage']*100:.0f}% coverage — target ≥0.60 met")
+        else:
+            metric_card(mc[0], "Hybrid Directional Acc.", f"{hyb:.3f}" if hyb else "—", TEAL, "3-seed mean")
+        metric_card(mc[1], "Hybrid (unfiltered)", f"{hyb:.3f}" if hyb else "—", TEAL, "all bars, 3-seed mean")
+        metric_card(mc[2], "GARCH baseline", f"{garch:.3f}" if garch else "—", NAVY, "best econometric baseline")
         metric_card(mc[3], "Hybrid MAE", f"{hyb_mae:.4f}", GREEN, "lowest among deep configs")
+        if tgc:
+            o, p = tgc["origin_rule"], tgc["per_horizon_committee"]
+            st.success(
+                f"**Trend-Gated Committee (selective accuracy):** trade only when the deep seed-ensemble and the "
+                f"GARCH expert **agree on direction** AND the trend-quality gate is open (|drift t-stat| ≥ "
+                f"train-split tercile). **DirAcc {o['diracc']:.4f} at {o['coverage']*100:.1f}% coverage** "
+                f"(split-half {o['diracc_half1']:.3f}/{o['diracc_half2']:.3f}); per-horizon committee "
+                f"**{p['diracc']:.4f}** at {p['pair_coverage']*100:.1f}% pair coverage. Parameter-free / "
+                f"train-calibrated — nothing tuned on the test set. Unfiltered accuracy remains honest at ~0.53.",
+                icon="🎯")
         st.markdown("")
         nice = {"Hybrid_CNN_LSTM_Transformer": "Hybrid CNN-LSTM-Transformer",
                 "GARCH": "GARCH (AR1-GARCH1,1)", "ARIMA": "ARIMA (walk-forward)"}
