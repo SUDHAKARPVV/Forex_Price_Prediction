@@ -204,6 +204,103 @@ def fetch_fxstreet_feed(feed_url: str, retries: int = 2, timeout: int = 10) -> p
     return df
 
 
+# ---------------------------------------------------------------------------
+# Google News RSS -- free, keyless, and (crucially) supports HISTORICAL
+# date-range queries via the `after:`/`before:` operators, up to ~100 items
+# per query. Two lanes are used:
+#   * Reuters-only ("site:reuters.com"): FinBERT was pretrained on the
+#     Reuters TRC2 corpus, so Reuters headlines are in-distribution for the
+#     scorer -- the closest free path to a "golden source" feed.
+#   * General gold query across all indexed outlets (breadth).
+# Only HEADLINES are collected (titles are what FinBERT scores); no article
+# bodies are scraped.
+# ---------------------------------------------------------------------------
+
+GOOGLE_NEWS_RSS = "https://news.google.com/rss/search"
+GOOGLE_NEWS_LANES = {
+    "reuters": '(gold OR bullion OR "gold price") site:reuters.com',
+    "general": '"gold price" OR "gold prices" OR "gold market" OR bullion OR "spot gold"',
+}
+# Google News titles end in " - Publisher"; strip it so dedup + FinBERT see
+# the clean headline. The publisher is kept in its own column.
+_GNEWS_SRC_RE = None
+
+
+def _split_gnews_title(title: str):
+    global _GNEWS_SRC_RE
+    import re
+    if _GNEWS_SRC_RE is None:
+        _GNEWS_SRC_RE = re.compile(r"\s+-\s+([^-]{2,40})$")
+    m = _GNEWS_SRC_RE.search(title)
+    if m:
+        return title[: m.start()].strip(), m.group(1).strip()
+    return title.strip(), ""
+
+
+def fetch_google_news_rss(query: str, start=None, end=None, timeout: int = 20,
+                          retries: int = 3) -> pd.DataFrame:
+    """One Google News RSS query -> DataFrame(timestamp, title, summary, link).
+    `start`/`end` (date-like) map to the after:/before: operators for
+    historical windows; both omitted = freshest headlines. Never raises."""
+    try:
+        import feedparser
+        import requests
+    except ImportError:
+        warnings.warn("feedparser/requests missing -- Google News lane skipped.")
+        return pd.DataFrame()
+
+    q = query
+    if start is not None:
+        q += f" after:{pd.Timestamp(start).date()}"
+    if end is not None:
+        q += f" before:{pd.Timestamp(end).date()}"
+    params = {"q": q, "hl": "en-US", "gl": "US", "ceid": "US:en"}
+    raw = None
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.get(GOOGLE_NEWS_RSS, params=params, headers=BROWSER_HEADERS, timeout=timeout)
+            if r.status_code == 200:
+                raw = r.content
+                break
+            if r.status_code == 429:                     # throttled -- back off
+                time.sleep(10.0 * attempt)
+                continue
+        except Exception:
+            pass
+        time.sleep(1.5 * attempt)
+    if raw is None:
+        return pd.DataFrame()
+    feed = feedparser.parse(raw)
+    rows = []
+    for e in getattr(feed, "entries", []):
+        pp = e.get("published_parsed")
+        if not pp:
+            continue
+        title, source = _split_gnews_title(e.get("title", ""))
+        if not title:
+            continue
+        rows.append({"timestamp": datetime(*pp[:6]), "title": title,
+                     "summary": source, "link": e.get("link", "")})
+    return pd.DataFrame(rows)
+
+
+def fetch_google_news(days: int = 7) -> pd.DataFrame:
+    """Live lane: freshest gold headlines from both Google News lanes
+    (Reuters-only + general), deduplicated."""
+    frames = []
+    since = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=days)
+    for lane, q in GOOGLE_NEWS_LANES.items():
+        f = fetch_google_news_rss(q, start=since)
+        if not f.empty:
+            print(f"[real_data_feed] Google News lane '{lane}': {len(f)} headlines.")
+            frames.append(f)
+        time.sleep(1.0)
+    if not frames:
+        return pd.DataFrame()
+    return (pd.concat(frames, ignore_index=True)
+            .drop_duplicates(subset=["title"]).sort_values("timestamp").reset_index(drop=True))
+
+
 def fetch_gdelt_news(
     query: str = '("gold price" OR "gold prices" OR "gold market" OR "gold rally" OR bullion)',
     days: int = 60,
@@ -390,6 +487,11 @@ def fetch_all_news(feed_urls=None, gdelt_days: int = 60, gdelt_window_days: int 
         recent = fetch_gdelt_news(days=14, window_days=2)
         if not recent.empty:
             frames.append(recent)
+    # Google News RSS (free, keyless): Reuters-filtered + general gold lanes.
+    # Much denser than the direct RSS feeds and immune to GDELT rate limits.
+    gnews = fetch_google_news(days=7)
+    if not gnews.empty:
+        frames.append(gnews)
     for url in feed_urls:
         f = fetch_fxstreet_feed(url)
         if not f.empty:
