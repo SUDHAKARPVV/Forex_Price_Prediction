@@ -2,7 +2,7 @@
 
 | Model | MAE | RMSE | MAPE (%) | Directional accuracy (regression) | Directional accuracy (classifier) |
 |---|---|---|---|---|---|
-| Hybrid_CNN_LSTM_Transformer | 0.02067 | 0.02930 | 817.6 | 0.5501 | 0.5475 |
+| Hybrid_CNN_LSTM_Transformer | 0.01997 | 0.02826 | 912.8 | 0.5622 | 0.5462 |
 | ARIMA | 0.01989 | 0.02778 | 154.2 | 0.4865 | n/a |
 | GARCH | 0.01963 | 0.02746 | 233.4 | 0.5768 | n/a |
 
