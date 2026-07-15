@@ -164,8 +164,13 @@ def run_pair(pair: str) -> dict:
              origins=origins, preds=np.stack([garch_by[t] for t in origins]),
              close_md5=__import__("hashlib").md5(
                  np.asarray(panel.close, dtype=np.float64).tobytes()).hexdigest())
+    import datetime as _dt
     meta = {
         "pair": cfg.name, "slug": cfg.slug, "label": cfg.label,
+        "seed": SEED, "saved_at": _dt.datetime.now().isoformat(timespec="seconds"),
+        "feature_names": list(panel.feature_names),
+        "lookback": DATA_CFG.lookback, "horizon": DATA_CFG.horizon,
+        "n_total": DATA_CFG.n_total_features,
         "bars": int(len(panel.close)), "date_start": str(panel.dates[0]),
         "date_end": str(panel.dates[-1]),
         "split": {"train": len(tr), "val": len(va), "test": len(te)},

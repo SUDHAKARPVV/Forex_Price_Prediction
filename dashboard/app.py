@@ -534,7 +534,6 @@ elif page.startswith("📊"):
     st.markdown("Three real, incrementally-cached streams are aligned to a common daily grid, giving "
                 f"**{DATA_CFG.n_total_features} features** per bar over a 60-bar lookback window.")
     from data.pairs import panel_csv_path
-    names = meta["feature_names"] if meta else None
     _ppath = panel_csv_path(PAIR)
     if not os.path.exists(_ppath):
         st.error(f"{_ppath} not found — build {PCFG.label} first: "
