@@ -924,3 +924,45 @@ elif page.startswith("📈"):
         ]))
         st.caption("The +3.4pp gain decomposes into ~2.0pp added-channel effect (a noise column achieves it) "
                    "and ~1.4pp genuine diffusion signal. See report Section 6a.")
+
+        # ---- cross-pair zero-shot transfer ----
+        xp = load_json("exports/cross_pair_transfer.json")
+        if xp and xp.get("pairs"):
+            st.divider()
+            st.subheader("🌍 Multi-pair — cross-pair zero-shot transfer")
+            st.markdown(
+                "The **gold-trained Hybrid** (frozen seed-9 weights, *no fine-tuning*) evaluated on other pairs "
+                "built through the same pipeline. Each pair uses its **own** train-split normalisation, its own "
+                "walk-forward XGBoost expert (refit every 14 windows), and is compared against its **own** "
+                "walk-forward AR(1)-GARCH(1,1). These tickers have no news archive, so every bar carries the "
+                "'none' sentiment state — the condition modality masking trains for.")
+            rows = [{"Pair": "XAU/USD (gold — native, trained)", "Bars": "6,489", "Test windows": 963,
+                     "Hybrid DirAcc": 0.5606, "WF-expert alone": None, "Own GARCH": 0.5768}]
+            chart = {"XAU/USD\n(native)": (0.5606, None, 0.5768)}
+            for pr, v in xp["pairs"].items():
+                rows.append({"Pair": f"{pr} (zero-shot)", "Bars": f"{v['bars']:,}",
+                             "Test windows": v["test_windows"],
+                             "Hybrid DirAcc": round(v["hybrid_zero_shot"]["diracc"], 4),
+                             "WF-expert alone": round(v["wf_expert_alone_diracc"], 4),
+                             "Own GARCH": round(v["garch"]["diracc"], 4)})
+                chart[pr + "\n(zero-shot)"] = (v["hybrid_zero_shot"]["diracc"],
+                                               v["wf_expert_alone_diracc"], v["garch"]["diracc"])
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            xfig = go.Figure()
+            labels = list(chart.keys())
+            xfig.add_trace(go.Bar(name="Hybrid", x=labels, y=[c[0] for c in chart.values()], marker_color=TEAL))
+            xfig.add_trace(go.Bar(name="WF-expert (pair-local)", x=labels,
+                                  y=[c[1] for c in chart.values()], marker_color=GREEN))
+            xfig.add_trace(go.Bar(name="Own GARCH", x=labels, y=[c[2] for c in chart.values()], marker_color=NAVY))
+            xfig.add_hline(y=0.5, line_dash="dot", line_color=SLATE, annotation_text="coin flip")
+            xfig.update_layout(barmode="group", height=320, template="plotly_white",
+                               yaxis_title="Directional accuracy", yaxis_range=[0.45, 0.62],
+                               margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(xfig, use_container_width=True)
+            st.info(
+                "**Two findings.** ① Transfer **succeeds within the asset complex**: gold→silver works zero-shot "
+                "(0.517 vs silver's own GARCH at 0.489 — GARCH is below coin-flip on choppy silver, yet the "
+                "gold-learned dynamics still carry over via shared macro drivers). ② Transfer **fails across "
+                "asset classes**: gold→euro scores 0.481, but the pair-local walk-forward expert built by the "
+                "same pipeline reaches **0.575** on EUR/USD — the *methodology* transfers even where the deep "
+                "weights don't; per-pair fine-tuning is the natural next step.", icon="🌍")
