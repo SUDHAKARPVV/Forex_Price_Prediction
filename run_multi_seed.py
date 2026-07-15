@@ -176,7 +176,20 @@ def build_trend_gated_committee(seeds, model="Hybrid_CNN_LSTM_Transformer"):
     half = n // 2
     m1 = ruleD.copy(); m1[half:] = False
     m2 = ruleD.copy(); m2[:half] = False
+
+    # Costed backtest restricted to committee-approved days: trade the agreed
+    # 1-step sign, flat otherwise (conviction 1/0 with tau=0.5 gates exactly
+    # the approved bars), 2bps per position change.
+    from utils.backtest import conviction_backtest
+    a1 = frames[0]["actual_h1"].values
+    bt = conviction_backtest(a1, g["pred_h1"].values, frames[0]["origin"].values,
+                             tau=0.5, mode="follow", cost_bps=2.0,
+                             conviction=np.where(ruleD, 1.0, 0.0))
     return {
+        "backtest": {k: bt[k] for k in ("total_return_pct", "buy_hold_return_pct",
+                                        "annualised_sharpe", "buy_hold_sharpe",
+                                        "time_in_market", "n_transactions",
+                                        "max_drawdown_log", "cost_bps_per_change")},
         "train_tstat_threshold": thr,
         "strong_trend_coverage": float(strong.mean()),
         "origin_rule": {

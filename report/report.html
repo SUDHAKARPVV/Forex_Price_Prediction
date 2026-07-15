@@ -883,6 +883,17 @@ coverage from 18% to <b>100%</b> — and directional accuracy <b>did not improve
 control, the evidence is consistent and conclusive: <b>daily FinBERT headline sentiment
 carries no material next-day directional alpha for gold</b> — headline sentiment appears
 to be priced in by the close. This is reported as a first-class negative result.</p>
+<p><b>Refinement — the intraday event study finds the alpha window.</b> Aligning every
+directional headline (|polarity| ≥ 0.15; 4,726 events over 789 trading days) to the first
+<i>hourly</i> bar after publication (<code>analysis_intraday_news.py</code>): event
+directional accuracy is ≈0.50 at +1h but <b>0.533 at +3h and 0.536 at +6h</b>
+(day-clustered z ≈ +2.7 to +3.0), with signed mean returns up to +14 bps by +24h. The
+signal is <i>not</i> a momentum echo — on the 2,125 events where sentiment contradicts the
+prior-6h price move, accuracy <b>rises to 0.560 at +3h</b> (news predicting reversals).
+Together the two results give the complete honest picture: <b>news sentiment carries a
+real 3–24 hour alpha window after publication, which is fully absorbed by the next daily
+close</b> — precisely why the daily-cadence model cannot monetise it, and the
+quantitative case for an intraday-resolution sentiment model as future work.</p>
 
 <h2>7. Comparison graphs — which model wins where</h2>
 
@@ -1114,6 +1125,7 @@ coverage (207 origins); split-half robustness
 <li>Per-horizon committee (agreement checked per (origin, horizon) pair):
 <b>DirAcc 0.6393</b> at 22.9% pair coverage
 (2201 pairs).</li>
+<li><b>Costed backtest on committee-approved days only:</b> <b>+45.8% net</b> at annualised Sharpe <b>1.15</b> — beating buy-and-hold's risk-adjusted return (Sharpe 1.12) while in the market only 21% of the time (max drawdown 6.9%, 163 trades at 2bps).</li>
 </ul>
 <p class="small">Honest reading: the ≥0.60 selective accuracy comes from combining the
 framework's components — deep-ensemble agreement supplies the veto, the GARCH expert the

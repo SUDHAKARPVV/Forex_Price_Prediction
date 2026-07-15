@@ -8919,6 +8919,16 @@
     "regime_ctx_importance": 0.031279128044843674
   },
   "trend_gated_committee": {
+    "backtest": {
+      "total_return_pct": 45.79505669420216,
+      "buy_hold_return_pct": 132.04764981783322,
+      "annualised_sharpe": 1.1526760123289195,
+      "buy_hold_sharpe": 1.1156711976319669,
+      "time_in_market": 0.21495327102803738,
+      "n_transactions": 163,
+      "max_drawdown_log": -0.06873322199999993,
+      "cost_bps_per_change": 2.0
+    },
     "train_tstat_threshold": 0.21863545333333326,
     "strong_trend_coverage": 0.3395638629283489,
     "origin_rule": {
