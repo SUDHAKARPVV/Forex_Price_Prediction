@@ -841,8 +841,13 @@ cutoff, no look-ahead) recovers that edge, and sweeping the refit cadence maps i
 the refit compute), so fortnightly refits capture essentially all of the recoverable
 adaptivity — the sweep's asymptote is ~0.562 against GARCH's 0.577, and the residual
 ~1.5pp is attributable to the baseline's parametric efficiency (2 parameters vs 4.4M),
-not to further adaptivity. <b>refit_every=14 is the chosen operating point</b>; the
-headline numbers in this report are from that configuration.</p>
+not to further adaptivity. <b>refit_every=14 is the chosen operating point.</b>
+A follow-up fused the walk-forward GARCH forecast itself as a <b>second internal
+expert</b> (nested convex blend with its own regime trust gate; the report's current
+headline numbers are from this dual-expert configuration): the result is <b>parity</b>
+(0.558 ± 0.003 vs 0.561 single-expert) — GARCH's information is redundant with the
+adaptive expert + drift features, closing the expert-fusion avenue and confirming
+~0.56 as the honest unfiltered asymptote for this feature set.</p>
 """)
 
         tgc = rm.get("trend_gated_committee")
