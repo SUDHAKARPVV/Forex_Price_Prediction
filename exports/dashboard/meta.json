@@ -1,6 +1,6 @@
 {
   "seed": 9,
-  "saved_at": "2026-07-14T01:33:40",
+  "saved_at": "2026-07-15T17:15:28",
   "feature_names": [
     "ret_open",
     "ret_high",
@@ -44,16 +44,16 @@
   "n_total": 35,
   "lookback": 60,
   "horizon": 10,
-  "n_params": 4386517,
+  "n_params": 4401639,
   "split": {
     "train": 4482,
     "val": 972,
     "test": 963
   },
   "test_metrics": {
-    "DirectionalAccuracy": 0.5345794392523364,
-    "MAE": 0.02165042795240879,
-    "RMSE": 0.02973894216120243
+    "DirectionalAccuracy": 0.5372793354101766,
+    "MAE": 0.021599702537059784,
+    "RMSE": 0.029734119772911072
   },
   "panel_bars": 6489,
   "date_start": "2000-08-30 00:00:00-04:00",
