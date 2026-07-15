@@ -27,6 +27,8 @@ from data.technical_indicators import compute_technical_features, realized_volat
 from data.sentiment import FinBERTSentimentScorer, build_sentiment_features
 from data.real_data_feed import try_fetch_real_panel
 from data.synthetic_data import generate_macro_stream as _synthetic_macro_stream
+from data.pairs import (PAIRS as _PAIRS_CFG, get_pair, panel_csv_path,
+                        intermediate_path, DEFAULT_PAIR)
 
 
 @dataclass
@@ -97,18 +99,22 @@ def _assemble_panel(ohlc: pd.DataFrame, macro: pd.DataFrame, news: pd.DataFrame,
 _REAL_FETCH_CACHE: dict = {}
 
 
-def _export_intermediates(real: dict, exports_dir: str = "exports") -> None:
+def _export_intermediates(real: dict, exports_dir: str = "exports", pair: str = DEFAULT_PAIR) -> None:
     """Write the intermediate real-data artifacts as CSVs for analysis:
     raw OHLCV from yfinance, every extracted headline with its FinBERT
     polarity/confidence score, and (later, from _assemble_panel via
     export_sentiment_features) the per-bar sentiment feature panel.
+
+    Paths are PER PAIR (data/pairs.py): gold keeps the legacy top-level
+    filenames, silver/euro write under exports/pairs/<slug>/ so a cross-pair
+    build never overwrites gold's raw extracts.
     Failures are non-fatal -- exports must never break a training run.
     """
     import os
 
     try:
         os.makedirs(exports_dir, exist_ok=True)
-        real["ohlc"].to_csv(os.path.join(exports_dir, "fx_prices_yfinance.csv"))
+        real["ohlc"].to_csv(intermediate_path(pair, "fx_prices_yfinance.csv", exports_dir))
 
         news = real.get("news_raw")
         if news is not None and not news.empty:
@@ -116,10 +122,10 @@ def _export_intermediates(real: dict, exports_dir: str = "exports") -> None:
             # already cached, so we just write them (no re-scoring).
             cols = [c for c in ["timestamp", "title", "summary", "link",
                                 "polarity", "confidence", "scorer_backend"] if c in news.columns]
-            news[cols].to_csv(os.path.join(exports_dir, "news_headlines_scored.csv"), index=False)
+            news[cols].to_csv(intermediate_path(pair, "news_headlines_scored.csv", exports_dir), index=False)
 
         if real.get("macro") is not None:
-            real["macro"].to_csv(os.path.join(exports_dir, "macro_fred.csv"))
+            real["macro"].to_csv(intermediate_path(pair, "macro_fred.csv", exports_dir))
 
         # Roadmap item 4 -- grow the archive: every fetch is appended to a
         # persistent per-ticker/per-interval price archive (deduplicated on
@@ -147,12 +153,11 @@ def _export_intermediates(real: dict, exports_dir: str = "exports") -> None:
         warnings.warn(f"Intermediate CSV export failed (non-fatal): {type(e).__name__}: {e}")
 
 
-def export_sentiment_features(panel: FXPanel, exports_dir: str = "exports") -> None:
-    """Write the per-bar fused sentiment features (+ close price) to CSV."""
-    import os
-
+def export_sentiment_features(panel: FXPanel, exports_dir: str = "exports",
+                              pair: str = DEFAULT_PAIR) -> None:
+    """Write the per-bar fused sentiment features (+ close price) to CSV,
+    per pair (gold top-level, others under exports/pairs/<slug>/)."""
     try:
-        os.makedirs(exports_dir, exist_ok=True)
         sent_cols = [i for i, n in enumerate(panel.feature_names) if n.startswith(("sent_", "sig_", "headline_"))]
         df = pd.DataFrame(
             panel.features[:, sent_cols],
@@ -160,8 +165,9 @@ def export_sentiment_features(panel: FXPanel, exports_dir: str = "exports") -> N
             index=panel.dates,
         )
         df.insert(0, "close", panel.close)
-        df.to_csv(os.path.join(exports_dir, "sentiment_features_per_bar.csv"))
-        print(f"[data] Per-bar sentiment features written to {exports_dir}/sentiment_features_per_bar.csv")
+        out = intermediate_path(pair, "sentiment_features_per_bar.csv", exports_dir)
+        df.to_csv(out)
+        print(f"[data] Per-bar sentiment features written to {out}")
     except Exception as e:
         warnings.warn(f"Sentiment feature CSV export failed (non-fatal): {type(e).__name__}: {e}")
 
@@ -169,11 +175,9 @@ def export_sentiment_features(panel: FXPanel, exports_dir: str = "exports") -> N
 # Roadmap "grow the archive / add pairs": pair names map to Yahoo tickers,
 # so XAG/USD and EUR/USD panels (and their persistent archives under
 # exports/archive/) build through the same pipeline as gold.
-PAIR_TICKERS = {
-    "XAU/USD": "GC=F",       # COMEX gold futures
-    "XAG/USD": "SI=F",       # COMEX silver futures
-    "EUR/USD": "EURUSD=X",   # spot euro-dollar (note: Yahoo reports no volume)
-}
+# Pair -> Yahoo ticker, derived from the single source of truth (data/pairs.py)
+# so the map can never drift from the news/relevance config.
+PAIR_TICKERS = {name: cfg.ticker for name, cfg in _PAIRS_CFG.items()}
 
 
 def build_fx_panel(
@@ -185,7 +189,7 @@ def build_fx_panel(
     real_ticker: str = None,
     real_interval: str = "1d",
     real_count: int = None,
-    panel_csv: str = "exports/feature_panel.csv",
+    panel_csv: str = None,
 ) -> FXPanel:
     """Assemble the full multi-modal panel for one currency pair.
 
@@ -198,6 +202,11 @@ def build_fx_panel(
         synthetic fallback if unreachable.
     source="synthetic": the signal-linked synthetic generator.
     """
+    # Resolve the per-pair panel path (gold -> legacy exports/feature_panel.csv,
+    # others -> exports/pairs/<slug>/feature_panel.csv) unless one was given.
+    if panel_csv is None:
+        panel_csv = panel_csv_path(pair)
+
     if source == "panel":
         return load_panel_csv(panel_csv)
 
@@ -212,7 +221,7 @@ def build_fx_panel(
             real = try_fetch_real_panel(ticker_symbol=real_ticker, interval=real_interval, count=real_count)
             if real is not None:
                 _REAL_FETCH_CACHE[cache_key] = real
-                _export_intermediates(real)
+                _export_intermediates(real, pair=pair)
         if real is not None:
             ohlc = real["ohlc"]
             if real.get("macro") is not None:
@@ -227,7 +236,7 @@ def build_fx_panel(
             print(f"[data] Using LIVE data: {len(ohlc)} candles from Yahoo Finance, "
                   f"{real['n_raw_headlines']} raw headlines (GDELT + RSS), macro: {macro_src}.")
             panel = _assemble_panel(ohlc, macro, news, source="real")
-            export_sentiment_features(panel)
+            export_sentiment_features(panel, pair=pair)
             return panel
         else:
             warnings.warn(

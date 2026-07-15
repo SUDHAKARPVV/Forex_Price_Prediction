@@ -284,12 +284,14 @@ def fetch_google_news_rss(query: str, start=None, end=None, timeout: int = 20,
     return pd.DataFrame(rows)
 
 
-def fetch_google_news(days: int = 7) -> pd.DataFrame:
-    """Live lane: freshest gold headlines from both Google News lanes
-    (Reuters-only + general), deduplicated."""
+def fetch_google_news(days: int = 7, lanes: dict = None) -> pd.DataFrame:
+    """Live lane: freshest headlines from both Google News lanes
+    (Reuters-only + general), deduplicated. `lanes` defaults to the gold
+    lanes; pass a pair's PairConfig.gnews_lanes for silver/euro."""
     frames = []
+    lanes = lanes or GOOGLE_NEWS_LANES
     since = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=days)
-    for lane, q in GOOGLE_NEWS_LANES.items():
+    for lane, q in lanes.items():
         f = fetch_google_news_rss(q, start=since)
         if not f.empty:
             print(f"[real_data_feed] Google News lane '{lane}': {len(f)} headlines.")
@@ -462,12 +464,18 @@ def _grow_news_archive(fresh: pd.DataFrame, ticker: str, exports_dir: str = "exp
         return fresh if fresh is not None else pd.DataFrame()
 
 
-def fetch_all_news(feed_urls=None, gdelt_days: int = 60, gdelt_window_days: int = 5) -> pd.DataFrame:
+def fetch_all_news(feed_urls=None, gdelt_days: int = 60, gdelt_window_days: int = 5,
+                   pair=None) -> pd.DataFrame:
     """Try every feed in `feed_urls` (default: FXStreet + fallbacks) and
     concatenate whatever succeeds. Only returns empty if ALL feeds fail --
     prints a per-feed diagnostic either way so failures are visible.
+
+    `pair` selects the per-currency GDELT query, Google-News lanes and
+    relevance filter (data/pairs.py); default is gold, for backward compat.
     """
     import os
+    from data.pairs import get_pair, DEFAULT_PAIR
+    cfg = get_pair(pair) if pair is not None else get_pair(DEFAULT_PAIR)
 
     feed_urls = feed_urls or DEFAULT_NEWS_FEEDS
     frames = []
@@ -477,19 +485,20 @@ def fetch_all_news(feed_urls=None, gdelt_days: int = 60, gdelt_window_days: int 
     # due to GDELT's strict rate limit, so FX_SKIP_GDELT=1 (set by the
     # test suite) skips it.
     if os.environ.get("FX_SKIP_GDELT") != "1":
-        gdelt = fetch_gdelt_news(days=gdelt_days, window_days=gdelt_window_days)
+        gdelt = fetch_gdelt_news(query=cfg.gdelt_query, days=gdelt_days, window_days=gdelt_window_days)
         if not gdelt.empty:
             frames.append(gdelt)
         # Blind-spot fix: the monthly historical slices index the freshest
         # days sparsely, leaving a ~1-week gap at the edge of the test set
         # where every sentiment feature is zero. A dedicated fine-grained
         # pass over the last 14 days (2-day slices) densely fills that gap.
-        recent = fetch_gdelt_news(days=14, window_days=2)
+        recent = fetch_gdelt_news(query=cfg.gdelt_query, days=14, window_days=2)
         if not recent.empty:
             frames.append(recent)
-    # Google News RSS (free, keyless): Reuters-filtered + general gold lanes.
-    # Much denser than the direct RSS feeds and immune to GDELT rate limits.
-    gnews = fetch_google_news(days=7)
+    # Google News RSS (free, keyless): Reuters-filtered + general lanes for
+    # THIS pair. Much denser than the direct RSS feeds and immune to GDELT
+    # rate limits.
+    gnews = fetch_google_news(days=7, lanes=cfg.gnews_lanes)
     if not gnews.empty:
         frames.append(gnews)
     for url in feed_urls:
@@ -503,7 +512,7 @@ def fetch_all_news(feed_urls=None, gdelt_days: int = 60, gdelt_window_days: int 
         )
         return pd.DataFrame()
     merged = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["title"]).sort_values("timestamp").reset_index(drop=True)
-    return filter_relevant_news(merged)
+    return filter_relevant_news(merged, pair=cfg)
 
 
 # STRICT gold relevance (fixes cross-asset contamination): a headline is
@@ -543,28 +552,33 @@ _FOREIGN_FX_PATTERN = (
 )
 
 
-def filter_relevant_news(news: pd.DataFrame, min_title_words: int = 4) -> pd.DataFrame:
-    """Keep only gold-relevant headlines. A headline passes if it mentions
-    gold/precious metals OR a core gold-macro driver, is long enough to
-    carry content, and is NOT primarily foreign-FX chatter (unless it also
-    names gold). Prints the breakdown so the filtering is auditable.
+def filter_relevant_news(news: pd.DataFrame, min_title_words: int = 4, pair=None) -> pd.DataFrame:
+    """Keep only headlines relevant to `pair` (default gold, for backward
+    compatibility). A headline passes if it mentions the pair's ASSET OR a
+    core shared macro driver, is long enough to carry content, and is NOT
+    primarily OTHER-asset chatter (unless it also names the pair's asset).
+    Patterns come from data/pairs.py so each currency filters its own feed.
+    Prints the breakdown so the filtering is auditable.
     """
+    from data.pairs import get_pair, DEFAULT_PAIR
+    cfg = get_pair(pair) if pair is not None else get_pair(DEFAULT_PAIR)
+
     if news.empty:
         return news
     text = (news["title"].fillna("") + " " + news["summary"].fillna("")).str.lower()
-    is_gold = text.str.contains(_GOLD_PATTERN, regex=True)
-    is_gold_macro = text.str.contains(_GOLD_MACRO_PATTERN, regex=True)
-    is_foreign = text.str.contains(_FOREIGN_FX_PATTERN, regex=True)
+    is_asset = text.str.contains(cfg.asset_pattern, regex=True)
+    is_macro = text.str.contains(cfg.macro_pattern, regex=True)
+    is_foreign = text.str.contains(cfg.foreign_pattern, regex=True)
     long_enough = news["title"].fillna("").str.split().str.len() >= min_title_words
 
-    # Relevant = (gold OR gold-macro) AND long enough AND not foreign-FX-
-    # only. Gold mentions override the foreign-FX exclusion (e.g. "Gold and
-    # the euro both rally" is still about gold).
-    relevant = (is_gold | is_gold_macro) & long_enough & (is_gold | ~is_foreign)
+    # Relevant = (asset OR shared-macro) AND long enough AND not OTHER-asset-
+    # only. An asset mention overrides the foreign exclusion (e.g. for gold,
+    # "Gold and the euro both rally" is still about gold).
+    relevant = (is_asset | is_macro) & long_enough & (is_asset | ~is_foreign)
     kept = news[relevant].reset_index(drop=True)
-    n_foreign = int((is_foreign & ~is_gold).sum())
-    print(f"[real_data_feed] gold relevance filter: kept {len(kept)}/{len(news)} headlines "
-          f"({len(news)-len(kept)} dropped: {n_foreign} foreign-FX/cross-asset, rest off-topic/short).")
+    n_foreign = int((is_foreign & ~is_asset).sum())
+    print(f"[real_data_feed] {cfg.slug} relevance filter: kept {len(kept)}/{len(news)} headlines "
+          f"({len(news)-len(kept)} dropped: {n_foreign} other-asset/cross-asset, rest off-topic/short).")
     return kept
 
 
@@ -833,8 +847,22 @@ def try_fetch_real_panel(ticker_symbol: str = "GC=F", interval: str = "5m", coun
     (never raises) if either feed is unreachable, so the caller can fall
     back to synthetic data with a single `if result is None:` check.
     """
-    ohlc = fetch_gold_candles(ticker_symbol=ticker_symbol, interval=interval, count=count)
-    if ohlc.empty:
+    from data.pairs import pair_for_ticker
+    cfg = pair_for_ticker(ticker_symbol)   # None for unknown tickers -> gold defaults
+
+    # Prefer MT5-exported rates when the user has dropped a CSV for this pair
+    # (data/mt5_feed.py). MT5's Python API is Windows-only, so this is the
+    # cross-platform path to MT5's longer/cleaner FX history. Falls through to
+    # yfinance transparently when no MT5 file is present.
+    ohlc = None
+    if cfg is not None and os.environ.get("FOREX_NO_MT5") != "1":
+        from data.mt5_feed import load_mt5_ohlc
+        ohlc = load_mt5_ohlc(cfg.name, interval)
+        if ohlc is not None and count:
+            ohlc = ohlc.tail(int(count))
+    if ohlc is None:
+        ohlc = fetch_gold_candles(ticker_symbol=ticker_symbol, interval=interval, count=count)
+    if ohlc is None or ohlc.empty:
         return None
 
     # Interval-aware news depth. Daily bars now reach ~5 years back (1825
@@ -877,7 +905,7 @@ def try_fetch_real_panel(ticker_symbol: str = "GC=F", interval: str = "5m", coun
             print(f"[real_data_feed] OFFLINE mode: rebuilding from cached scored archive "
                   f"(latest {last_date.date()}, no GDELT fetch, no re-scoring).")
             news = pd.read_csv(archive_path, parse_dates=["timestamp"])
-            news = filter_relevant_news(news) if len(news) else news
+            news = filter_relevant_news(news, pair=cfg) if len(news) else news
         else:
             # No archive for this ticker (e.g. SI=F / EURUSD=X in the
             # cross-pair transfer experiment): skip news entirely rather than
@@ -900,12 +928,12 @@ def try_fetch_real_panel(ticker_symbol: str = "GC=F", interval: str = "5m", coun
         print(f"[real_data_feed] news archive present (latest {last_date.date()}); "
               f"incremental top-up of the last {gap_days} day(s) only.")
         top_up = fetch_all_news(gdelt_days=min(gap_days, gdelt_days),
-                                gdelt_window_days=min(gdelt_window, max(2, gap_days)))
+                                gdelt_window_days=min(gdelt_window, max(2, gap_days)), pair=cfg)
         news = _grow_news_archive(top_up, ticker_symbol)  # merges+scores new, returns full scored archive
     else:
         print("[real_data_feed] no news archive found -- one-time full live fetch "
               "(slow, rate-limited; build_news_archive.py is the reliable path).")
-        fresh = fetch_all_news(gdelt_days=gdelt_days, gdelt_window_days=gdelt_window)
+        fresh = fetch_all_news(gdelt_days=gdelt_days, gdelt_window_days=gdelt_window, pair=cfg)
         news = _grow_news_archive(fresh, ticker_symbol)
     # Align using CACHED per-headline scores (no re-scoring).
     news_aligned = align_scored_news_to_bars(ohlc.index, news, window_hours=align_hours)

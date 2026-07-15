@@ -40,16 +40,32 @@ FOMC_DECISION_DATES = pd.to_datetime([
 ])
 
 
+def _naive_dates(dates) -> pd.DatetimeIndex:
+    """Coerce ANY date input -- tz-naive, tz-aware, or (crucially) a mixed-
+    offset index like the yfinance panel's US/Eastern dates that flip between
+    -04:00 and -05:00 across DST -- into a tz-naive, midnight-normalised
+    DatetimeIndex on the SAME calendar day.
+
+    This is the fix for the "always normal trading day" bug: a plain
+    pd.DatetimeIndex(dates) RAISES on mixed-offset input ("Tz-aware datetime
+    cannot be converted ... unless utc=True"), so events_table silently fell
+    back to no-event for every bar. Parsing with utc=True then dropping the
+    tz keeps the calendar date (Eastern midnight -> 04:00/05:00Z, same day).
+    """
+    idx = pd.DatetimeIndex(pd.to_datetime(dates, utc=True))
+    return idx.tz_convert("UTC").tz_localize(None).normalize()
+
+
 def nfp_mask(dates: pd.DatetimeIndex) -> "pd.Series":
     """True on first-Friday-of-month bars (NFP release days)."""
-    d = pd.DatetimeIndex(dates)
+    d = _naive_dates(dates)
     return (d.dayofweek == 4) & (d.day <= 7)
 
 
 def fomc_mask(dates: pd.DatetimeIndex, window_days: int = 1) -> "pd.Series":
     """True on FOMC decision days and the `window_days` trading days after
     (the decision's impact spills into the following session)."""
-    d = pd.DatetimeIndex(dates).normalize()
+    d = _naive_dates(dates)
     fomc = set()
     for base in FOMC_DECISION_DATES:
         for k in range(window_days + 1):
@@ -62,3 +78,42 @@ def scheduled_event_mask(dates: pd.DatetimeIndex) -> "pd.Series":
     import numpy as np
 
     return np.asarray(nfp_mask(dates)) | np.asarray(fomc_mask(dates))
+
+
+def _nfp_dates(start, end) -> "list[pd.Timestamp]":
+    """First-Friday-of-month NFP dates between start and end (inclusive)."""
+    out = []
+    d = pd.Timestamp(start).normalize().replace(day=1)
+    end = pd.Timestamp(end).normalize()
+    while d <= end + pd.offsets.MonthBegin(1):
+        # first Friday = first day + offset to Friday(4)
+        first_friday = d + pd.Timedelta(days=(4 - d.dayofweek) % 7)
+        if pd.Timestamp(start) <= first_friday <= end:
+            out.append(first_friday)
+        d = d + pd.offsets.MonthBegin(1)
+    return out
+
+
+def upcoming_events(from_date=None, n: int = 6) -> "list[dict]":
+    """The next `n` scheduled macro events on/after `from_date` (default:
+    today), each as {date, event, days_until}. Used by the dashboard so the
+    calendar always shows the real upcoming FOMC/NFP schedule with a
+    countdown -- instead of only flagging events inside a tiny window (which
+    is 'normal trading day' almost every day)."""
+    base = pd.Timestamp(from_date).normalize() if from_date is not None \
+        else pd.Timestamp.today().normalize()
+    horizon_end = base + pd.Timedelta(days=400)
+
+    events = []
+    for f in FOMC_DECISION_DATES:
+        f = pd.Timestamp(f).normalize()
+        if base <= f <= horizon_end:
+            events.append((f, "🏛️ FOMC rate decision"))
+    for nfp in _nfp_dates(base, horizon_end):
+        events.append((nfp, "📊 NFP payrolls"))
+
+    events.sort(key=lambda x: x[0])
+    out = []
+    for dt, name in events[:n]:
+        out.append({"date": dt, "event": name, "days_until": int((dt - base).days)})
+    return out
