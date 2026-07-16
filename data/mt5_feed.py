@@ -222,12 +222,28 @@ def load_mt5_live(pair, interval: str = "4h", count: "int | None" = None,
 # --------------------------------------------------------------------------
 # CSV import fallback (unchanged; used when the live API is unavailable)
 # --------------------------------------------------------------------------
+# interval -> the suffix MT5's own CSV export uses (XAUUSD_H1.CSV)
+_MT5_EXPORT_TF = {"1m": "M1", "5m": "M5", "15m": "M15", "30m": "M30",
+                  "1h": "H1", "h1": "H1", "4h": "H4", "h4": "H4",
+                  "1d": "D1", "d1": "D1", "1w": "W1"}
+
+
 def mt5_csv_path(pair: str, interval: str = "1d", exports_dir: str = "exports") -> "str | None":
     """Return the MT5 CSV path for this pair/interval if one exists, else None.
-    Checks the interval-specific name first, then the pair-only name."""
+
+    Looks for, in order:
+      exports/pairs/<SLUG>/<SLUG>_<TF>.CSV   -- MT5 terminal export (tab-separated,
+                                                <DATE> <TIME> <OPEN>... headers)
+      exports/mt5/<SLUG>_<interval>.csv      -- legacy drop-in locations
+      exports/mt5/<SLUG>.csv
+    """
     from data.pairs import get_pair
     slug = get_pair(pair).slug
-    candidates = [
+    tf = _MT5_EXPORT_TF.get(interval.lower(), interval.upper())
+    candidates = []
+    for ext in ("CSV", "csv"):
+        candidates.append(os.path.join(exports_dir, "pairs", slug, f"{slug}_{tf}.{ext}"))
+    candidates += [
         os.path.join(exports_dir, "mt5", f"{slug}_{interval}.csv"),
         os.path.join(exports_dir, "mt5", f"{slug}.csv"),
     ]
@@ -262,7 +278,10 @@ def load_mt5_ohlc(pair: str, interval: str = "1d", exports_dir: str = "exports")
     if path is None:
         return None
     try:
-        df = pd.read_csv(path)
+        # MT5's terminal export is TAB-separated with <DATE> <TIME> headers;
+        # other drops are comma-separated. sep=None + the python engine sniffs
+        # whichever it is.
+        df = pd.read_csv(path, sep=None, engine="python")
         colmap = {c.lower(): c for c in df.columns}
 
         # Time: either a single datetime column, or MT5's split <DATE>+<TIME>.
@@ -273,10 +292,20 @@ def load_mt5_ohlc(pair: str, interval: str = "1d", exports_dir: str = "exports")
             warnings.warn(f"[mt5_feed] {path}: no recognisable time column; ignoring MT5 file.")
             return None
         if "<date>" in colmap and "<time>" in colmap:
-            ts = pd.to_datetime(df[colmap["<date>"]].astype(str) + " " + df[colmap["<time>"]].astype(str),
-                                errors="coerce")
+            joined = (df[colmap["<date>"]].astype(str).str.strip() + " "
+                      + df[colmap["<time>"]].astype(str).str.strip())
+            # MT5 exports dotted dates ("2010.01.04 01:00:00"). Pin the format --
+            # pandas>=2 infers ONE format from the first row and silently NaTs
+            # everything that disagrees.
+            ts = pd.to_datetime(joined, format="%Y.%m.%d %H:%M:%S", errors="coerce")
+            if ts.isna().mean() > 0.5:      # not the dotted layout after all
+                ts = pd.to_datetime(joined, format="mixed", errors="coerce")
         else:
-            ts = pd.to_datetime(df[tcol], errors="coerce")
+            ts = pd.to_datetime(df[tcol], format="mixed", errors="coerce")
+
+        n_bad = int(pd.isna(ts).sum())
+        if n_bad:
+            warnings.warn(f"[mt5_feed] {path}: {n_bad} unparseable timestamps dropped.")
 
         out = pd.DataFrame(index=pd.DatetimeIndex(ts))
         for canon, aliases in _COL_ALIASES.items():
