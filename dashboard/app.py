@@ -588,7 +588,10 @@ elif page.startswith("📊"):
         colA, colB = st.columns([2, 1])
         with colA:
             st.subheader(f"{PCFG.emoji} {PCFG.label} price ({PCFG.ticker})")
-            dts = pd.to_datetime(dfp["date"], utc=True, errors="coerce")
+            # format="mixed": legacy panels mix date-only and date-time rows, and
+            # a single inferred format would NaT most of them (the chart then
+            # appeared to stop years early).
+            dts = pd.to_datetime(dfp["date"], format="mixed", utc=True, errors="coerce")
             fig = go.Figure(go.Scatter(x=dts, y=dfp["close"], line=dict(color=TEAL, width=1)))
             fig.update_layout(height=280, margin=dict(l=0, r=0, t=10, b=0),
                               yaxis_title="close", template="plotly_white")

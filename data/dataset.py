@@ -338,7 +338,12 @@ def save_panel_csv(panel: FXPanel, path: str = "exports/feature_panel.csv") -> s
     df.insert(1, "realized_vol", panel.realized_vol)
     df.insert(2, "atr", panel.atr)
     df.index.name = "date"
-    df.to_csv(path)
+    # Pin an EXPLICIT, uniform datetime format. Without it pandas emits
+    # midnight bars as date-only ("2011-11-01") and the rest with a time
+    # ("2026-07-16 04:00:00"); pandas>=2 then infers ONE format from the first
+    # row on read and coerces every non-matching row to NaT -- silently
+    # destroying thousands of dates (it wiped 5,455/8,086 on the H4 panels).
+    df.to_csv(path, date_format="%Y-%m-%d %H:%M:%S")
     return path
 
 
@@ -351,7 +356,11 @@ def load_panel_csv(path: str = "exports/feature_panel.csv") -> FXPanel:
             f"Feature panel not found at {path}. Run the DATA pipeline first: "
             f"python build_dataset.py"
         )
-    df = pd.read_csv(path, index_col=0, parse_dates=True)
+    # format="mixed" parses each value on its own terms, so a legacy panel with
+    # mixed date-only/date-time rows still loads correctly (plain parse_dates
+    # would silently NaT every row that doesn't match the inferred format).
+    df = pd.read_csv(path, index_col=0)
+    df.index = pd.to_datetime(df.index, format="mixed", errors="coerce")
     meta_cols = ["close", "realized_vol", "atr"]
     feat_cols = [c for c in df.columns if c not in meta_cols]
     assert len(feat_cols) == DATA_CFG.n_total_features, (
