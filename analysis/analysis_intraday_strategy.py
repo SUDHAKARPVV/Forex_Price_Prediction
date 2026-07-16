@@ -14,7 +14,7 @@ Rules are PRE-REGISTERED from the event study, not tuned here:
   * one position at a time (new signals while in-position are ignored),
   * costs: 2 bps per side (4 bps round trip).
 
-Outputs exports/intraday_strategy_backtest.json and prints the table.
+Outputs results/intraday_strategy_backtest.json and prints the table.
 """
 from __future__ import annotations
 
@@ -108,8 +108,8 @@ def main():
                   f"avg {m['avg_trade_bps']:+.1f}bps, net {m['total_net_pct']:+.1f}%, "
                   f"Sharpe {m['annualised_sharpe']:.2f}, DD {m['max_drawdown_pct']:.1f}%, "
                   f"exposure {m['exposure']*100:.0f}%")
-    json.dump(out, open("exports/intraday_strategy_backtest.json", "w"), indent=2)
-    print("[strategy] written exports/intraday_strategy_backtest.json")
+    json.dump(out, open("results/intraday_strategy_backtest.json", "w"), indent=2)
+    print("[strategy] written results/intraday_strategy_backtest.json")
 
 
 if __name__ == "__main__":

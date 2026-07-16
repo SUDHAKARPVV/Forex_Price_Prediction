@@ -425,7 +425,7 @@ page = st.sidebar.radio("Navigate", [
     "📈 Results & Baselines",
 ])
 meta = load_json(os.path.join(CKPT_PAIR, "meta.json"))
-summ = load_json("multi_seed_summary.json")
+summ = load_json("results/multi_seed_summary.json")
 st.sidebar.divider()
 st.sidebar.markdown(f"**{PCFG.emoji} {PCFG.label}**")
 if meta and "saved_at" in meta:
@@ -961,7 +961,7 @@ elif page.startswith("🔮"):
 elif page.startswith("📈"):
     st.title(f"📈 Results & Baselines — {PCFG.emoji} {PCFG.label}")
     hc, rc = st.columns([4, 1])
-    _pm_path = os.path.join("exports", "pair_metrics", f"{PCFG.slug}.json")
+    _pm_path = os.path.join("results", "pair_metrics", f"{PCFG.slug}.json")
     hc.caption(f"Per-pair train/test metrics from `{_pm_path}` "
                f"(updated **{file_mtime(_pm_path)}**). Re-run "
                f"`python train_pairs.py --pairs {PAIR}` to refresh, then reload.")
@@ -1031,7 +1031,7 @@ elif page.startswith("📈"):
         garch = summ.get("GARCH", {}).get("DirectionalAccuracy", {}).get("mean")
         arima = summ.get("ARIMA", {}).get("DirectionalAccuracy", {}).get("mean")
         hyb_mae = summ["Hybrid_CNN_LSTM_Transformer"]["MAE"]["mean"]
-        road = load_json("roadmap_summary.json") or {}
+        road = load_json("results/roadmap_summary.json") or {}
         tgc = road.get("trend_gated_committee")
         mc = st.columns(4)
         if tgc:
@@ -1087,9 +1087,9 @@ elif page.startswith("📈"):
                    "and ~1.4pp genuine diffusion signal. See report Section 6a.")
 
         # ---- cross-pair zero-shot transfer ----
-        xp = load_json("exports/cross_pair_transfer.json")
+        xp = load_json("results/cross_pair_transfer.json")
         if xp and xp.get("pairs"):
-            ftj = load_json("exports/cross_pair_finetune.json") or {"pairs": {}}
+            ftj = load_json("results/cross_pair_finetune.json") or {"pairs": {}}
             st.divider()
             st.subheader("🌍 Multi-pair — cross-pair transfer (zero-shot & fine-tuned)")
             st.markdown(

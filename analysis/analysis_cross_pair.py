@@ -16,7 +16,7 @@ For each target pair (XAG/USD silver, EUR/USD euro):
   5. Baseline: the pair's own AR(1)-GARCH(1,1), walk-forward at every test
      origin (parallelised).
 
-Output: exports/cross_pair_transfer.json + printed table.
+Output: results/cross_pair_transfer.json + printed table.
 Usage:  FOREX_OFFLINE_NEWS=1 python analysis_cross_pair.py
 """
 from __future__ import annotations
@@ -106,8 +106,8 @@ def main():
               f"MAE {rep['overall']['MAE']:.5f} | wf-expert alone {xgb_da:.4f} | "
               f"GARCH {g_da:.4f} (MAE {g_mae:.5f}, n={g_n})")
 
-    json.dump(out, open("exports/cross_pair_transfer.json", "w"), indent=2, default=float)
-    print("\n[cross-pair] written exports/cross_pair_transfer.json")
+    json.dump(out, open("results/cross_pair_transfer.json", "w"), indent=2, default=float)
+    print("\n[cross-pair] written results/cross_pair_transfer.json")
 
 
 if __name__ == "__main__":

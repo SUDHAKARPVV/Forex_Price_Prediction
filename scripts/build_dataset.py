@@ -23,6 +23,12 @@ Once the verification report looks good, run PIPELINE 2:
 """
 from __future__ import annotations
 
+# Resolve project imports when run from the repo root as
+# `python scripts/<this file>.py` (the script's own dir is sys.path[0]).
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.getcwd())
+
 import argparse
 
 import numpy as np

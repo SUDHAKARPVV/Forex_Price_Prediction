@@ -14,7 +14,7 @@ metrics are directly comparable:
   5. Baselines on the SAME test windows: the pair's own walk-forward GARCH
      and ARIMA(2,1,2).
   6. Save a per-pair dashboard checkpoint (exports/dashboard/<slug>/) and
-     write exports/pair_metrics/<slug>.json.
+     write results/pair_metrics/<slug>.json.
 
 Usage:
     FOREX_OFFLINE_NEWS=1 python train_pairs.py                 # all three
@@ -209,8 +209,8 @@ def run_pair(pair: str, interval: str = "4h") -> dict:
         "n_params": int(hybrid.count_parameters()),
     }
     json.dump(meta, open(os.path.join(ckpt, "meta.json"), "w"), indent=2, default=str)
-    os.makedirs("exports/pair_metrics", exist_ok=True)
-    json.dump(meta, open(f"exports/pair_metrics/{cfg.slug}.json", "w"), indent=2, default=float)
+    os.makedirs("results/pair_metrics", exist_ok=True)
+    json.dump(meta, open(f"results/pair_metrics/{cfg.slug}.json", "w"), indent=2, default=float)
     print(f"[train_pairs] {cfg.slug}: Hybrid DirAcc {meta['hybrid']['DirAcc']:.4f} "
           f"MAE {meta['hybrid']['MAE']:.5f} | wf-expert {wf_da:.4f} | "
           f"GARCH {garch_m['DirAcc']:.4f} | ARIMA {arima_m['DirAcc'] if arima_m else float('nan'):.4f}")
@@ -227,9 +227,9 @@ def main():
     summary = {}
     for pair in args.pairs:
         summary[get_pair(pair).slug] = run_pair(pair, interval=args.interval)
-    os.makedirs("exports/pair_metrics", exist_ok=True)
-    json.dump(summary, open("exports/pair_metrics/all_pairs.json", "w"), indent=2, default=float)
-    print("\n[train_pairs] wrote exports/pair_metrics/all_pairs.json")
+    os.makedirs("results/pair_metrics", exist_ok=True)
+    json.dump(summary, open("results/pair_metrics/all_pairs.json", "w"), indent=2, default=float)
+    print("\n[train_pairs] wrote results/pair_metrics/all_pairs.json")
     print(f"{'pair':10s} {'Hybrid':>8s} {'wf-exp':>8s} {'GARCH':>8s} {'ARIMA':>8s}")
     for slug, m in summary.items():
         a = m["arima"]["DirAcc"] if m["arima"] else float("nan")

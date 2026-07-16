@@ -1,10 +1,10 @@
 """
-Standalone report generator: turns an existing evaluation_report.json
+Standalone report generator: turns an existing results/evaluation_report.json
 (e.g. one from a previous run) into the human-readable HTML/PNG report,
 without re-running training or evaluation.
 
 Usage:
-    python generate_report.py --input evaluation_report.json --output_dir report
+    python generate_report.py --input results/evaluation_report.json --output_dir report
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from utils.report import generate_report
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", type=str, default="evaluation_report.json")
+    parser.add_argument("--input", type=str, default="results/evaluation_report.json")
     parser.add_argument("--output_dir", type=str, default="report")
     args = parser.parse_args()
 

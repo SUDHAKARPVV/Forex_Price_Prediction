@@ -15,8 +15,8 @@ plt.rcParams.update({
 NAVY, TEAL, GREEN, AMBER, SLATE = "#1F3759", "#0891B2", "#059669", "#B45309", "#64748B"
 ROOT = ".."
 
-summ = json.load(open(f"{ROOT}/multi_seed_summary.json"))
-road = json.load(open(f"{ROOT}/roadmap_summary.json"))
+summ = json.load(open(f"{ROOT}/results/multi_seed_summary.json"))
+road = json.load(open(f"{ROOT}/results/roadmap_summary.json"))
 
 
 def save(fig, name):
@@ -65,9 +65,9 @@ def per_horizon(path):
         acc.append((a == p).mean())
     return acc
 try:
-    h_acc = per_horizon(f"{ROOT}/exports/predictions_test_Hybrid_CNN_LSTM_Transformer_seed9.csv")
-    g_acc = per_horizon(f"{ROOT}/exports/predictions_test_GARCH_seed9.csv")
-    a_acc = per_horizon(f"{ROOT}/exports/predictions_test_ARIMA_seed9.csv")
+    h_acc = per_horizon(f"{ROOT}/results/predictions_test_Hybrid_CNN_LSTM_Transformer_seed9.csv")
+    g_acc = per_horizon(f"{ROOT}/results/predictions_test_GARCH_seed9.csv")
+    a_acc = per_horizon(f"{ROOT}/results/predictions_test_ARIMA_seed9.csv")
     hs = np.arange(1, 11)
     fig, ax = plt.subplots(figsize=(3.3, 2.2))
     ax.plot(hs, g_acc, "-o", color=NAVY, ms=3, label="GARCH")
@@ -104,7 +104,7 @@ if bt and bt.get("equity_curve"):
 
 # --- Fig: example multi-step forecast vs actual ---
 try:
-    df = pd.read_csv(f"{ROOT}/exports/predictions_test_Hybrid_CNN_LSTM_Transformer_seed9.csv")
+    df = pd.read_csv(f"{ROOT}/results/predictions_test_Hybrid_CNN_LSTM_Transformer_seed9.csv")
     # choose a window with a clear trend for illustration
     row = df.iloc[len(df) // 2]
     hs = np.arange(1, 11)

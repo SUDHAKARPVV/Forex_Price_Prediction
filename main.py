@@ -105,14 +105,14 @@ def run(
         import os
 
         try:
-            os.makedirs("exports", exist_ok=True)
+            os.makedirs("results", exist_ok=True)
             origin_dates = [panel.dates[t] for t in test_ds.indices]
             k = y_true.shape[1]
             df_out = __import__("pandas").DataFrame({"origin": origin_dates})
             for h in range(k):
                 df_out[f"actual_h{h+1}"] = y_true[:, h]
                 df_out[f"pred_h{h+1}"] = y_pred[:, h]
-            path = f"exports/predictions_test_{name}_seed{seed}.csv"
+            path = f"results/predictions_test_{name}_seed{seed}.csv"
             df_out.to_csv(path, index=False)
             print(f"[export] {path}")
         except Exception as e:
@@ -310,9 +310,9 @@ def run(
         clf_str = f"  ClfDirAcc={clf_acc:.3f}" if clf_acc is not None else ""
         print(f"{name:30s} MAE={o['MAE']:.5f}  RMSE={o['RMSE']:.5f}  R2={o['R2']:.3f}  DirAcc={o['DirectionalAccuracy']:.3f}{clf_str}")
 
-    with open("evaluation_report.json", "w") as f:
+    with open("results/evaluation_report.json", "w") as f:
         json.dump(reports, f, indent=2, default=float)
-    print("\nMachine-readable report written to evaluation_report.json")
+    print("\nMachine-readable report written to results/evaluation_report.json")
 
     price_pred_payload = None
     if "_actual" in price_predictions_by_model:

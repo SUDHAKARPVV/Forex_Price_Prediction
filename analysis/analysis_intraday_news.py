@@ -14,7 +14,7 @@ No model, no fitting -- a pure event study. Output: per-horizon event
 directional accuracy vs the 0.5 base rate with binomial standard errors.
 
 Usage:  python analysis_intraday_news.py
-Writes: exports/intraday_event_study.json
+Writes: results/intraday_event_study.json
 """
 from __future__ import annotations
 
@@ -86,8 +86,8 @@ def main():
             out["strong_subset"][name] = {"diracc": acc, "n": n}
         print("  strong (|pol|>=0.5):", {k: round(v['diracc'], 4) for k, v in out["strong_subset"].items()})
 
-    json.dump(out, open("exports/intraday_event_study.json", "w"), indent=2)
-    print("[intraday] written exports/intraday_event_study.json")
+    json.dump(out, open("results/intraday_event_study.json", "w"), indent=2)
+    print("[intraday] written results/intraday_event_study.json")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ For each target pair (XAG/USD, EUR/USD):
   5. Re-evaluate on the pair's test windows with the walk-forward XGBoost
      expert (refit_every=14, the gold operating point).
 
-Output: exports/cross_pair_finetune.json + printed table.
+Output: results/cross_pair_finetune.json + printed table.
 Usage:  FOREX_OFFLINE_NEWS=1 python analysis_finetune_pairs.py
 """
 from __future__ import annotations
@@ -117,8 +117,8 @@ def main():
         print(f"[finetune] {pair}: zero-shot {rep0['overall']['DirectionalAccuracy']:.4f} -> "
               f"fine-tuned {rep1['overall']['DirectionalAccuracy']:.4f} | own GARCH {g_da:.4f}")
 
-    json.dump(out, open("exports/cross_pair_finetune.json", "w"), indent=2, default=float)
-    print("\n[finetune] written exports/cross_pair_finetune.json")
+    json.dump(out, open("results/cross_pair_finetune.json", "w"), indent=2, default=float)
+    print("\n[finetune] written results/cross_pair_finetune.json")
 
 
 if __name__ == "__main__":

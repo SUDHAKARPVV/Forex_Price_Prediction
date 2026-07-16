@@ -18,14 +18,20 @@ Inputs (all produced by `python run_multi_seed.py --n_days 5000`):
     exports/fx_prices_yfinance.csv
     exports/news_headlines_scored.csv
     exports/sentiment_features_per_bar.csv
-    exports/predictions_test_<model>_seed<N>.csv
-    multi_seed_summary.json
-    evaluation_report.json
+    results/predictions_test_<model>_seed<N>.csv
+    results/multi_seed_summary.json
+    results/evaluation_report.json
 
 Usage:
     python generate_final_report.py
 """
 from __future__ import annotations
+
+# Resolve project imports when run from the repo root as
+# `python scripts/<this file>.py` (the script's own dir is sys.path[0]).
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.getcwd())
 
 import json
 import os
@@ -71,25 +77,29 @@ def _load_csv(path, **kw):
 
 
 def load_all():
+    # Gold's intermediates live under exports/pairs/XAUUSD/ since the layout was
+    # made uniform across pairs -- resolve via the helper rather than the old
+    # top-level paths (which silently returned None and produced a "?"-bar report).
+    from data.pairs import intermediate_path as _ip
     data = {
-        "prices": _load_csv("exports/fx_prices_yfinance.csv", parse_dates=["date"]),
-        "news": _load_csv("exports/news_headlines_scored.csv", parse_dates=["timestamp"]),
-        "sent": _load_csv("exports/sentiment_features_per_bar.csv"),
-        "macro": _load_csv("exports/macro_fred.csv"),
+        "prices": _load_csv(_ip("XAU/USD", "fx_prices_yfinance.csv"), parse_dates=["date"]),
+        "news": _load_csv(_ip("XAU/USD", "news_headlines_scored.csv"), parse_dates=["timestamp"]),
+        "sent": _load_csv(_ip("XAU/USD", "sentiment_features_per_bar.csv")),
+        "macro": _load_csv(_ip("XAU/USD", "macro_fred.csv")),
         "summary": None,
         "roadmap": None,
         "preds": {},
     }
-    if os.path.exists("multi_seed_summary.json"):
-        data["summary"] = json.load(open("multi_seed_summary.json"))
-    if os.path.exists("roadmap_summary.json"):
-        data["roadmap"] = json.load(open("roadmap_summary.json"))
+    if os.path.exists("results/multi_seed_summary.json"):
+        data["summary"] = json.load(open("results/multi_seed_summary.json"))
+    if os.path.exists("results/roadmap_summary.json"):
+        data["roadmap"] = json.load(open("results/roadmap_summary.json"))
     for m in MODELS_WITH_EXPORTS:
         for s in SEEDS:
-            p = _load_csv(f"exports/predictions_test_{m}_seed{s}.csv")
+            p = _load_csv(f"results/predictions_test_{m}_seed{s}.csv")
             if p is not None:
                 data["preds"][(m, s)] = p
-    ens = _load_csv("exports/predictions_test_Hybrid_CNN_LSTM_Transformer_seed_ensemble.csv")
+    ens = _load_csv("results/predictions_test_Hybrid_CNN_LSTM_Transformer_seed_ensemble.csv")
     if ens is not None:
         data["preds"][("Hybrid_CNN_LSTM_Transformer", "ensemble")] = ens
 
@@ -495,7 +505,7 @@ information than "neutral news".</td></tr>
         first_col = sent_sample.columns[0]
         cols = [first_col] + [c for c in keep if c in sent_sample.columns and c != first_col]
         n_test = len(next(iter(d["preds"].values()))) if d["preds"] else "?"
-        n_bars = len(d["prices"]) if d["prices"] is not None else "?"
+        n_bars = f'{len(d["prices"]):,}' if d["prices"] is not None else "?"
         S.append(f"""
 <h2>4. Input to the Hybrid CNN-LSTM-Transformer</h2>
 <p>Each training sample is a sliding window ({d['window_label']}):</p>
@@ -503,7 +513,7 @@ information than "neutral news".</td></tr>
 y            (10,)      — cumulative log-returns of close at t+1 … t+10 (the target)
 regime_ctx   (2,)       — realised volatility and ATR at the forecast origin
 xgb_pred     (10,)      — the frozen XGBoost expert's forecast for the same window</pre>
-<p>The {n_bars:,}-bar panel is split chronologically 70/15/15 (train/validation/test;
+<p>The {n_bars}-bar panel is split chronologically 70/15/15 (train/validation/test;
 <b>{n_test}</b> test windows), with normalisation fit on the training split only. The
 target is a <i>return</i>, not a price level — predicting levels rewards trivial
 random-walk copying; predicting return signs is the honest task. A slice of the per-bar
@@ -568,7 +578,7 @@ selected by <b>validation directional accuracy</b>. Conviction throughout is the
     for s, acc, head in sample_rows:
         S.append(f"""
 <p><b>Seed {s}</b> — test DirAcc {acc:.3f} · first test-set forecast origins from
-<code>exports/predictions_test_Hybrid_CNN_LSTM_Transformer_seed{s}.csv</code>
+<code>results/predictions_test_Hybrid_CNN_LSTM_Transformer_seed{s}.csv</code>
 (h1 = next bar, h10 = cumulative 10 bars ahead, log-return units):</p>
 {df_to_html(head, floatfmt="{:+.5f}")}
 """)
@@ -617,8 +627,8 @@ own parts. ARIMA/GARCH are deterministic (no seed variance). The <b>seed-ensembl
 """)
 
         # ---- 6b. per-pair results (multi-currency) ----
-        if os.path.exists("exports/pair_metrics/all_pairs.json"):
-            allp = json.load(open("exports/pair_metrics/all_pairs.json"))
+        if os.path.exists("results/pair_metrics/all_pairs.json"):
+            allp = json.load(open("results/pair_metrics/all_pairs.json"))
             prows = []
             for slug, m in allp.items():
                 a = m.get("arima") or {}
@@ -912,10 +922,10 @@ all-bars accuracy remains ~0.53 vs GARCH 0.577.</p>
 """)
 
         # ---- cross-pair zero-shot transfer (roadmap item: add currency pairs) ----
-        if os.path.exists("exports/cross_pair_transfer.json"):
-            xp = json.load(open("exports/cross_pair_transfer.json"))
-            ft = (json.load(open("exports/cross_pair_finetune.json"))
-                  if os.path.exists("exports/cross_pair_finetune.json") else {"pairs": {}})
+        if os.path.exists("results/cross_pair_transfer.json"):
+            xp = json.load(open("results/cross_pair_transfer.json"))
+            ft = (json.load(open("results/cross_pair_finetune.json"))
+                  if os.path.exists("results/cross_pair_finetune.json") else {"pairs": {}})
             xp_rows = []
             for pr, v in xp.get("pairs", {}).items():
                 f = ft["pairs"].get(pr, {})
@@ -1047,14 +1057,14 @@ the probabilistic forecaster.</li>
 """)
 
     # ---------------- 9. summary ----------------
-    n_bars = len(d["prices"]) if d["prices"] is not None else "?"
+    n_bars = f'{len(d["prices"]):,}' if d["prices"] is not None else "?"
     n_news = len(d["news"]) if d["news"] is not None else "?"
     macro_note = ("REAL macro (Yahoo rates/DXY + BLS CPI)"
                   if d["macro"] is not None else "synthetic macro (live fetch unavailable)")
     S.append(f"""
 <h2>9. Summary &amp; conclusion</h2>
 <p>This project built and honestly evaluated a complete multi-modal FX forecasting
-system: <b>{n_bars:,} live {d['interval_label']} XAU/USD candles</b> from yfinance
+system: <b>{n_bars} live {d['interval_label']} XAU/USD candles</b> from yfinance
 (daily runs use the full listed history), a real news pipeline (Google News RSS with a
 dedicated Reuters lane + GDELT archive + direct RSS, <b>{n_news:,}</b> FinBERT-scored
 headlines with 100% test-set coverage), <b>{macro_note}</b>, <b>35 engineered
@@ -1082,7 +1092,7 @@ intermediate artifact (prices, scored headlines, macro series, per-bar features,
 and ensemble predictions) is exported as CSV under <code>exports/</code> for independent
 verification, and the full evidence trail of every architecture iteration is in the git
 history.</p>
-<p class="small">Generated from: multi_seed_summary.json · roadmap_summary.json ·
+<p class="small">Generated from: results/multi_seed_summary.json · results/roadmap_summary.json ·
 exports/*.csv · seeds 9/36/99.</p>
 """)
 

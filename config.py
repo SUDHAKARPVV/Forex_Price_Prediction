@@ -16,8 +16,23 @@ Exchange Rates", Sections 3.1.1-3.1.5):
     Regime-aware output          soft-gated dual MLP decoder heads
     Target params                ~4.0M
 """
+import os
 from dataclasses import dataclass, field
 from typing import List
+
+# --------------------------------------------------------------------------
+# Output layout
+#   results/  -- the run OUTPUTS you READ: metrics/summary JSONs, reports.
+#   exports/  -- the DATA store: feature panels, news/price archives, model
+#                checkpoints. Both produced AND consumed by the pipeline, so it
+#                is deliberately kept separate from results/.
+# --------------------------------------------------------------------------
+RESULTS_DIR = "results"
+
+
+def results_path(*parts: str) -> str:
+    """Path under results/. Callers that WRITE should makedirs on the parent."""
+    return os.path.join(RESULTS_DIR, *parts)
 
 
 @dataclass

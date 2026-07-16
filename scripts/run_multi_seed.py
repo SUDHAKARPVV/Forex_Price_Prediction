@@ -13,6 +13,12 @@ Usage:
 """
 from __future__ import annotations
 
+# Resolve project imports when run from the repo root as
+# `python scripts/<this file>.py` (the script's own dir is sys.path[0]).
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.getcwd())
+
 import argparse
 import json
 
@@ -43,7 +49,7 @@ def build_seed_ensemble(seeds, model="Hybrid_CNN_LSTM_Transformer"):
 
     frames = []
     for s in seeds:
-        path = f"exports/predictions_test_{model}_seed{s}.csv"
+        path = f"results/predictions_test_{model}_seed{s}.csv"
         if not os.path.exists(path):
             return None
         frames.append(pd.read_csv(path))
@@ -59,7 +65,7 @@ def build_seed_ensemble(seeds, model="Hybrid_CNN_LSTM_Transformer"):
     for h in range(10):
         out[f"actual_h{h+1}"] = base[:, h]
         out[f"pred_h{h+1}"] = mean_pred[:, h]
-    out.to_csv(f"exports/predictions_test_{model}_seed_ensemble.csv", index=False)
+    out.to_csv(f"results/predictions_test_{model}_seed_ensemble.csv", index=False)
     return summarize(base, mean_pred), len(base)
 
 
@@ -82,7 +88,7 @@ def build_consensus_filter(seeds, model="Hybrid_CNN_LSTM_Transformer", cost_bps=
 
     frames = []
     for s in seeds:
-        path = f"exports/predictions_test_{model}_seed{s}.csv"
+        path = f"results/predictions_test_{model}_seed{s}.csv"
         if not os.path.exists(path):
             return None
         frames.append(pd.read_csv(path))
@@ -135,11 +141,11 @@ def build_trend_gated_committee(seeds, model="Hybrid_CNN_LSTM_Transformer"):
 
     frames = []
     for s in seeds:
-        p = f"exports/predictions_test_{model}_seed{s}.csv"
+        p = f"results/predictions_test_{model}_seed{s}.csv"
         if not os.path.exists(p):
             return None
         frames.append(pd.read_csv(p))
-    gp = f"exports/predictions_test_GARCH_seed{seeds[0]}.csv"
+    gp = f"results/predictions_test_GARCH_seed{seeds[0]}.csv"
     if not (os.path.exists(gp) and os.path.exists(GOLD_PANEL)):
         return None
     g = pd.read_csv(gp)
@@ -239,9 +245,9 @@ def multi_seed_evaluation(seeds, **run_kwargs):
             row += f"{s['mean']:>10.5f} +/-{s['std']:.5f}"
         print(row)
 
-    with open("multi_seed_summary.json", "w") as f:
+    with open("results/multi_seed_summary.json", "w") as f:
         json.dump(summary, f, indent=2, default=float)
-    print("\nFull multi-seed summary written to multi_seed_summary.json")
+    print("\nFull multi-seed summary written to results/multi_seed_summary.json")
 
     # --- Roadmap extras: seed ensemble + event-window + calibrated abstention ---
     roadmap = {"seeds": list(seeds)}
@@ -286,9 +292,9 @@ def multi_seed_evaluation(seeds, **run_kwargs):
               f"vs {consensus['unfiltered_diracc']:.3f} unfiltered; backtest "
               f"{consensus['backtest']['total_return_pct']:+.1f}% net (Sharpe {consensus['backtest']['annualised_sharpe']:.2f})")
 
-    with open("roadmap_summary.json", "w") as f:
+    with open("results/roadmap_summary.json", "w") as f:
         json.dump(roadmap, f, indent=2, default=float)
-    print("Roadmap extras (ensemble / event-window / abstention) written to roadmap_summary.json")
+    print("Roadmap extras (ensemble / event-window / abstention) written to results/roadmap_summary.json")
     return summary
 
 

@@ -29,12 +29,12 @@ cross-pair transfer); Section 9 concludes.</p>
 (<code>data/real_data_feed.py:fetch_gold_candles</code>): ticker <b>GC=F</b> (COMEX gold futures,
 the standard XAU/USD proxy), <b>daily</b> candles. Daily runs fetch the
 <b>full listed history</b> (intraday intervals are capped by Yahoo at 60 trailing days),
-giving <b>6,491 candles spanning 25.9 years</b> — the "more history"
+giving <b>300 candles spanning 1.2 years</b> — the "more history"
 roadmap item. Each candle carries OHLCV — open, high, low, close, volume — indexed by
 exchange timestamp. Full extract: <code>exports/fx_prices_yfinance.csv</code>.</p>
-<p><b>Data span:</b> 2000-08-30 00:00:00-04:00 → 2026-07-15 00:00:00-04:00 ·
-<b>close range:</b> 255.10 – 5318.40 USD ·
-<b>mean bar-to-bar move:</b> 0.792%</p>
+<p><b>Data span:</b> 2025-05-20 00:00:00 → 2026-07-16 00:00:00 ·
+<b>close range:</b> 3274.57 – 5417.69 USD ·
+<b>mean bar-to-bar move:</b> 1.141%</p>
 <p><b>Latest sample records:</b></p>
 <table class="dataframe">
   <thead>
@@ -49,56 +49,56 @@ exchange timestamp. Full extract: <code>exports/fx_prices_yfinance.csv</code>.</
   </thead>
   <tbody>
     <tr>
-      <td>2026-07-08 00:00:00-04:00</td>
-      <td>4116.30</td>
-      <td>4120.30</td>
-      <td>4053.00</td>
-      <td>4070.90</td>
-      <td>292</td>
+      <td>2026-07-09</td>
+      <td>4078.44</td>
+      <td>4138.13</td>
+      <td>4054.26</td>
+      <td>4123.74</td>
+      <td>376339</td>
     </tr>
     <tr>
-      <td>2026-07-09 00:00:00-04:00</td>
-      <td>4066.40</td>
-      <td>4130.60</td>
-      <td>4064.20</td>
-      <td>4130.60</td>
-      <td>13</td>
+      <td>2026-07-10</td>
+      <td>4125.33</td>
+      <td>4134.87</td>
+      <td>4072.85</td>
+      <td>4119.33</td>
+      <td>329433</td>
     </tr>
     <tr>
-      <td>2026-07-10 00:00:00-04:00</td>
-      <td>4122.30</td>
-      <td>4125.80</td>
-      <td>4090.60</td>
-      <td>4104.10</td>
-      <td>389</td>
+      <td>2026-07-13</td>
+      <td>4104.41</td>
+      <td>4106.59</td>
+      <td>3986.58</td>
+      <td>4001.03</td>
+      <td>511863</td>
     </tr>
     <tr>
-      <td>2026-07-13 00:00:00-04:00</td>
-      <td>4081.00</td>
-      <td>4081.00</td>
-      <td>3985.90</td>
-      <td>3997.00</td>
-      <td>679</td>
+      <td>2026-07-14</td>
+      <td>4002.18</td>
+      <td>4104.25</td>
+      <td>3983.43</td>
+      <td>4052.88</td>
+      <td>458184</td>
     </tr>
     <tr>
-      <td>2026-07-14 00:00:00-04:00</td>
-      <td>3995.70</td>
-      <td>4091.20</td>
-      <td>3986.50</td>
-      <td>4061.10</td>
-      <td>679</td>
+      <td>2026-07-15</td>
+      <td>4056.89</td>
+      <td>4081.26</td>
+      <td>4017.45</td>
+      <td>4060.48</td>
+      <td>433941</td>
     </tr>
     <tr>
-      <td>2026-07-15 00:00:00-04:00</td>
-      <td>4059.80</td>
-      <td>4078.20</td>
-      <td>4023.30</td>
-      <td>4076.20</td>
-      <td>55139</td>
+      <td>2026-07-16</td>
+      <td>4062.13</td>
+      <td>4066.37</td>
+      <td>3973.69</td>
+      <td>3987.62</td>
+      <td>362838</td>
     </tr>
   </tbody>
 </table>
-<img src="charts_final/price_series.png" alt="price series">
+<img src="charts_final\price_series.png" alt="price series">
 
 <h2>2. News feed extraction &amp; FinBERT sentiment scoring</h2>
 <p>Headlines come from three complementary free sources
@@ -110,7 +110,7 @@ gold/bullion lane — plus the <b>GDELT DOC 2.0 API</b> in date-bounded slices, 
 <b>RSS feeds</b> (Investing.com commodities/forex, FXStreet gold) for the freshest items.
 The resumable backfill (<code>build_news_archive_gnews.py</code>: monthly windows over
 2018–2022, 10-day windows across the walk-forward test span) grew the archive to
-<b>19,177 unique gold-relevant headlines</b>
+<b>19,195 unique gold-relevant headlines</b>
 (2018-01-01 → 2026-07-15), lifting test-set
 sentiment coverage from 18% to <b>100%</b> — every test bar carries real news.</p>
 <p>Each headline is scored <b>once</b> (cached; never re-scored) by
@@ -136,40 +136,40 @@ Full scored table: <code>exports/news_headlines_scored.csv</code>.</p>
   </thead>
   <tbody>
     <tr>
-      <td>2026-07-15 11:00:38</td>
-      <td>Gold’s $4,000 Test Exposes a Split Bullion Market as Silver Demand Cracks</td>
-      <td>-0.809</td>
-      <td>0.809</td>
+      <td>2026-07-15 14:13:00</td>
+      <td>Gold Price Analysis – Can Gold Hold $4,000 Support Amid Death Cross Risk?</td>
+      <td>0.000</td>
+      <td>0.907</td>
     </tr>
     <tr>
-      <td>2026-07-15 11:30:15</td>
-      <td>One Bullion Secures Fully Funded August Drill Campaign Following Completion of V</td>
-      <td>0.000</td>
-      <td>0.686</td>
+      <td>2026-07-15 14:14:35</td>
+      <td>US Dollar: Limited downside after CPI – BBH</td>
+      <td>-0.515</td>
+      <td>0.515</td>
     </tr>
     <tr>
-      <td>2026-07-15 11:50:17</td>
-      <td>21-Karat Gold Price Stands at JD82.80</td>
-      <td>0.000</td>
-      <td>0.942</td>
-    </tr>
-    <tr>
-      <td>2026-07-15 11:54:51</td>
-      <td>Gold prices today, Wednesday, July 15, 2026: Gold prices not advancing as airstr</td>
-      <td>0.000</td>
+      <td>2026-07-15 14:29:41</td>
+      <td>BoC's Macklem: Economic growth looks to have resumed in Canada</td>
+      <td>-0.689</td>
       <td>0.689</td>
     </tr>
     <tr>
-      <td>2026-07-15 11:56:55</td>
-      <td>US Dollar: Fed expectations weigh on Dollar – Commerzbank</td>
-      <td>-0.972</td>
-      <td>0.972</td>
+      <td>2026-07-15 14:29:47</td>
+      <td>Fed’s Williams: June CPI consistent with progress on inflation</td>
+      <td>0.600</td>
+      <td>0.600</td>
     </tr>
     <tr>
-      <td>2026-07-15 12:20:44</td>
-      <td>Gold Price Today on July 15, 2026</td>
-      <td>0.000</td>
-      <td>0.947</td>
+      <td>2026-07-15 14:55:22</td>
+      <td>Fed Chair Warsh: One-time change in prices isn't necessarily inflationary</td>
+      <td>-0.553</td>
+      <td>0.553</td>
+    </tr>
+    <tr>
+      <td>2026-07-15 14:59:28</td>
+      <td>BoC's Macklem: Canada Q2 is looking pretty solid</td>
+      <td>-0.597</td>
+      <td>0.597</td>
     </tr>
   </tbody>
 </table>
@@ -180,7 +180,7 @@ a healthy two-sided distribution (a lexicon fallback typically collapses to most
 the wide spread here is the FinBERT signature). The near-zero mean says the news window
 carried no persistent directional bias over the covered period, so any model edge must come from
 <i>timing</i>, not from a static sentiment tilt.</p>
-<img src="charts_final/polarity_hist.png" alt="polarity distribution">
+<img src="charts_final\polarity_hist.png" alt="polarity distribution">
 
 <h2>3. Feature engineering &amp; technical indicators</h2>
 <p>Every bar is described by <b>35 engineered features</b> in three fused streams
@@ -223,7 +223,7 @@ information than "neutral news".</td></tr>
 <p>Two additional side-channels bypass the fused stream: a <b>regime context</b> pair
 (rolling realised volatility, ATR) that drives the regime-aware components, and the
 <b>XGBoost expert's k-step prediction</b> (Section 5).</p>
-<img src="charts_final/macro_series.png" alt="real macro series"><p><b>Sample of the engineered features (most recent bars):</b></p><p><i>Technical stream (16 features, incl. the four drift features) — computed from OHLCV:</i></p><table class="dataframe">
+<img src="charts_final\macro_series.png" alt="real macro series"><p><b>Sample of the engineered features (most recent bars):</b></p><p><i>Technical stream (16 features, incl. the four drift features) — computed from OHLCV:</i></p><table class="dataframe">
   <thead>
     <tr style="text-align: right;">
       <th>date</th>
@@ -247,99 +247,99 @@ information than "neutral news".</td></tr>
   </thead>
   <tbody>
     <tr>
-      <td>2026-07-09</td>
-      <td>-0.0122</td>
-      <td>0.0025</td>
-      <td>0.0028</td>
-      <td>0.0146</td>
-      <td>0.3555</td>
-      <td>0.0042</td>
-      <td>0.1027</td>
-      <td>-1.2247</td>
-      <td>0.0213</td>
-      <td>0.0346</td>
-      <td>0.4660</td>
-      <td>-0.0201</td>
-      <td>0.0030</td>
-      <td>-0.0023</td>
-      <td>-0.0023</td>
-      <td>-0.1240</td>
-    </tr>
-    <tr>
       <td>2026-07-10</td>
-      <td>0.0137</td>
-      <td>-0.0012</td>
-      <td>0.0065</td>
-      <td>-0.0064</td>
-      <td>0.4120</td>
-      <td>0.0043</td>
-      <td>0.1027</td>
-      <td>-0.7031</td>
-      <td>0.0198</td>
-      <td>0.0181</td>
-      <td>0.5577</td>
-      <td>-0.0189</td>
-      <td>-0.0004</td>
-      <td>-0.0018</td>
+      <td>0.0114</td>
+      <td>-0.0008</td>
+      <td>0.0046</td>
+      <td>-0.0011</td>
+      <td>0.4456</td>
+      <td>0.0048</td>
+      <td>0.0928</td>
+      <td>-1.0863</td>
+      <td>0.0248</td>
+      <td>0.0093</td>
+      <td>0.6789</td>
+      <td>-0.0162</td>
       <td>-0.0027</td>
-      <td>-0.0969</td>
+      <td>-0.0010</td>
+      <td>-0.0027</td>
+      <td>-0.0755</td>
     </tr>
     <tr>
       <td>2026-07-13</td>
-      <td>-0.0101</td>
-      <td>-0.0109</td>
-      <td>-0.0259</td>
-      <td>-0.0264</td>
-      <td>0.3762</td>
-      <td>0.0027</td>
-      <td>0.1069</td>
-      <td>-0.2416</td>
-      <td>0.0208</td>
-      <td>-0.0202</td>
-      <td>0.1454</td>
-      <td>-0.0200</td>
-      <td>-0.0078</td>
-      <td>-0.0013</td>
+      <td>-0.0051</td>
+      <td>-0.0069</td>
+      <td>-0.0214</td>
+      <td>-0.0291</td>
+      <td>0.4220</td>
+      <td>0.0031</td>
+      <td>0.0877</td>
+      <td>0.8379</td>
+      <td>0.0260</td>
+      <td>-0.0039</td>
+      <td>0.2251</td>
+      <td>-0.0173</td>
+      <td>-0.0080</td>
+      <td>-0.0025</td>
       <td>-0.0031</td>
-      <td>-0.0747</td>
+      <td>-0.1654</td>
     </tr>
     <tr>
       <td>2026-07-14</td>
-      <td>-0.0211</td>
-      <td>0.0025</td>
-      <td>0.0002</td>
-      <td>0.0159</td>
-      <td>0.4547</td>
-      <td>0.0027</td>
-      <td>0.1066</td>
-      <td>-0.2079</td>
-      <td>0.0212</td>
-      <td>0.0096</td>
-      <td>0.4157</td>
-      <td>-0.0193</td>
-      <td>-0.0041</td>
-      <td>-0.0003</td>
-      <td>-0.0027</td>
-      <td>-0.0191</td>
+      <td>-0.0252</td>
+      <td>-0.0006</td>
+      <td>-0.0008</td>
+      <td>0.0129</td>
+      <td>0.5419</td>
+      <td>0.0028</td>
+      <td>0.0736</td>
+      <td>0.1856</td>
+      <td>0.0250</td>
+      <td>0.0112</td>
+      <td>0.4240</td>
+      <td>-0.0170</td>
+      <td>-0.0026</td>
+      <td>-0.0029</td>
+      <td>-0.0025</td>
+      <td>-0.2007</td>
     </tr>
     <tr>
       <td>2026-07-15</td>
-      <td>0.0159</td>
-      <td>-0.0032</td>
-      <td>0.0092</td>
-      <td>0.0037</td>
-      <td>0.5677</td>
-      <td>0.0031</td>
-      <td>0.0970</td>
-      <td>4.2420</td>
-      <td>0.0192</td>
-      <td>0.0132</td>
-      <td>0.4793</td>
-      <td>-0.0182</td>
-      <td>0.0003</td>
-      <td>-0.0016</td>
-      <td>-0.0029</td>
-      <td>-0.0966</td>
+      <td>0.0136</td>
+      <td>-0.0056</td>
+      <td>0.0085</td>
+      <td>0.0019</td>
+      <td>0.5272</td>
+      <td>0.0027</td>
+      <td>0.0649</td>
+      <td>-0.1064</td>
+      <td>0.0247</td>
+      <td>0.0073</td>
+      <td>0.4532</td>
+      <td>-0.0163</td>
+      <td>-0.0008</td>
+      <td>-0.0031</td>
+      <td>-0.0026</td>
+      <td>-0.2124</td>
+    </tr>
+    <tr>
+      <td>2026-07-16</td>
+      <td>0.0013</td>
+      <td>-0.0037</td>
+      <td>-0.0110</td>
+      <td>-0.0181</td>
+      <td>0.4268</td>
+      <td>0.0016</td>
+      <td>0.0629</td>
+      <td>-0.8515</td>
+      <td>0.0248</td>
+      <td>-0.0336</td>
+      <td>0.1737</td>
+      <td>-0.0171</td>
+      <td>-0.0067</td>
+      <td>-0.0031</td>
+      <td>-0.0027</td>
+      <td>-0.2150</td>
     </tr>
   </tbody>
 </table><p><i>Macro stream (6 features) — real, stationary (Yahoo rates/DXY + BLS CPI):</i></p><table class="dataframe">
@@ -356,17 +356,8 @@ information than "neutral news".</td></tr>
   </thead>
   <tbody>
     <tr>
-      <td>2026-07-09</td>
-      <td>0.3461</td>
-      <td>0.0640</td>
-      <td>-0.0044</td>
-      <td>3.8844</td>
-      <td>-0.3494</td>
-      <td>0.6333</td>
-    </tr>
-    <tr>
       <td>2026-07-10</td>
-      <td>0.6452</td>
+      <td>0.6025</td>
       <td>0.0840</td>
       <td>0.0011</td>
       <td>3.8844</td>
@@ -375,7 +366,7 @@ information than "neutral news".</td></tr>
     </tr>
     <tr>
       <td>2026-07-13</td>
-      <td>1.4360</td>
+      <td>1.5284</td>
       <td>0.1300</td>
       <td>0.0043</td>
       <td>3.8844</td>
@@ -384,21 +375,30 @@ information than "neutral news".</td></tr>
     </tr>
     <tr>
       <td>2026-07-14</td>
-      <td>1.3179</td>
-      <td>0.0800</td>
-      <td>0.0014</td>
+      <td>0.5479</td>
+      <td>0.0560</td>
+      <td>-0.0020</td>
       <td>3.8844</td>
       <td>-0.3494</td>
       <td>0.7167</td>
     </tr>
     <tr>
       <td>2026-07-15</td>
-      <td>-0.4014</td>
-      <td>-0.0020</td>
-      <td>-0.0022</td>
+      <td>0.0059</td>
+      <td>-0.0240</td>
+      <td>-0.0055</td>
       <td>3.8844</td>
       <td>-0.3494</td>
       <td>0.7333</td>
+    </tr>
+    <tr>
+      <td>2026-07-16</td>
+      <td>0.2185</td>
+      <td>0.0340</td>
+      <td>-0.0020</td>
+      <td>3.8844</td>
+      <td>-0.3494</td>
+      <td>0.7500</td>
     </tr>
   </tbody>
 </table><p><i>Sentiment stream (13 features) — FinBERT rolling stats + diffusion breadth + buy/sell/hold/none signal:</i></p><table class="dataframe">
@@ -422,32 +422,16 @@ information than "neutral news".</td></tr>
   </thead>
   <tbody>
     <tr>
-      <td>2026-07-09</td>
-      <td>-0.2921</td>
-      <td>0.0926</td>
-      <td>-0.4046</td>
-      <td>-0.1593</td>
-      <td>-0.3072</td>
-      <td>-0.1200</td>
-      <td>0.0959</td>
-      <td>-0.2066</td>
-      <td>2.1811</td>
-      <td>0.0000</td>
-      <td>1.0000</td>
-      <td>0.0000</td>
-      <td>0.0000</td>
-    </tr>
-    <tr>
       <td>2026-07-10</td>
-      <td>-0.2684</td>
-      <td>0.0686</td>
-      <td>-0.3489</td>
-      <td>-0.1593</td>
-      <td>-0.3029</td>
-      <td>-0.0072</td>
-      <td>0.0887</td>
-      <td>-0.2022</td>
-      <td>2.3545</td>
+      <td>-0.2739</td>
+      <td>0.0761</td>
+      <td>-0.3681</td>
+      <td>-0.1556</td>
+      <td>-0.3077</td>
+      <td>-0.0011</td>
+      <td>0.0863</td>
+      <td>-0.2076</td>
+      <td>2.2962</td>
       <td>0.0000</td>
       <td>1.0000</td>
       <td>0.0000</td>
@@ -455,15 +439,15 @@ information than "neutral news".</td></tr>
     </tr>
     <tr>
       <td>2026-07-13</td>
-      <td>-0.2739</td>
-      <td>0.0773</td>
-      <td>-0.3765</td>
-      <td>-0.1593</td>
-      <td>-0.3181</td>
-      <td>-0.0901</td>
-      <td>0.0793</td>
-      <td>-0.2128</td>
-      <td>2.7001</td>
+      <td>-0.2688</td>
+      <td>0.0687</td>
+      <td>-0.3428</td>
+      <td>-0.1556</td>
+      <td>-0.3149</td>
+      <td>-0.0561</td>
+      <td>0.0822</td>
+      <td>-0.2103</td>
+      <td>2.5425</td>
       <td>0.0000</td>
       <td>1.0000</td>
       <td>0.0000</td>
@@ -471,15 +455,15 @@ information than "neutral news".</td></tr>
     </tr>
     <tr>
       <td>2026-07-14</td>
-      <td>-0.3160</td>
-      <td>0.1192</td>
-      <td>-0.4784</td>
-      <td>-0.1593</td>
-      <td>-0.3512</td>
-      <td>-0.1019</td>
-      <td>0.0930</td>
-      <td>-0.2465</td>
-      <td>2.7652</td>
+      <td>-0.3088</td>
+      <td>0.1148</td>
+      <td>-0.4733</td>
+      <td>-0.1556</td>
+      <td>-0.3476</td>
+      <td>-0.1305</td>
+      <td>0.0928</td>
+      <td>-0.2429</td>
+      <td>2.7767</td>
       <td>0.0000</td>
       <td>1.0000</td>
       <td>0.0000</td>
@@ -487,15 +471,31 @@ information than "neutral news".</td></tr>
     </tr>
     <tr>
       <td>2026-07-15</td>
-      <td>-0.3815</td>
+      <td>-0.3759</td>
       <td>0.1000</td>
-      <td>-0.4870</td>
-      <td>-0.2793</td>
-      <td>-0.3792</td>
-      <td>-0.0086</td>
-      <td>0.1037</td>
-      <td>-0.2730</td>
-      <td>2.2365</td>
+      <td>-0.4914</td>
+      <td>-0.2856</td>
+      <td>-0.3773</td>
+      <td>-0.0180</td>
+      <td>0.1014</td>
+      <td>-0.2703</td>
+      <td>2.2431</td>
+      <td>0.0000</td>
+      <td>1.0000</td>
+      <td>0.0000</td>
+      <td>0.0000</td>
+    </tr>
+    <tr>
+      <td>2026-07-16</td>
+      <td>-0.4064</td>
+      <td>0.0881</td>
+      <td>-0.4914</td>
+      <td>-0.2867</td>
+      <td>-0.3898</td>
+      <td>0.0534</td>
+      <td>0.1040</td>
+      <td>-0.2878</td>
+      <td>1.9484</td>
       <td>0.0000</td>
       <td>1.0000</td>
       <td>0.0000</td>
@@ -509,8 +509,8 @@ information than "neutral news".</td></tr>
 y            (10,)      — cumulative log-returns of close at t+1 … t+10 (the target)
 regime_ctx   (2,)       — realised volatility and ATR at the forecast origin
 xgb_pred     (10,)      — the frozen XGBoost expert's forecast for the same window</pre>
-<p>The 6,491-bar panel is split chronologically 70/15/15 (train/validation/test;
-<b>963</b> test windows), with normalisation fit on the training split only. The
+<p>The 300-bar panel is split chronologically 70/15/15 (train/validation/test;
+<b>?</b> test windows), with normalisation fit on the training split only. The
 target is a <i>return</i>, not a price level — predicting levels rewards trivial
 random-walk copying; predicting return signs is the honest task. A slice of the per-bar
 sentiment block that enters the window
@@ -531,55 +531,55 @@ sentiment block that enters the window
   </thead>
   <tbody>
     <tr>
-      <td>2026-07-09 00:00:00-04:00</td>
-      <td>4130.600</td>
-      <td>-0.307</td>
-      <td>-0.120</td>
-      <td>2.181</td>
+      <td>2026-07-10</td>
+      <td>4119.330</td>
+      <td>-0.308</td>
+      <td>-0.001</td>
+      <td>2.296</td>
       <td>0.000</td>
       <td>1.000</td>
       <td>0.000</td>
       <td>0.000</td>
     </tr>
     <tr>
-      <td>2026-07-10 00:00:00-04:00</td>
-      <td>4104.100</td>
-      <td>-0.303</td>
-      <td>-0.007</td>
-      <td>2.355</td>
+      <td>2026-07-13</td>
+      <td>4001.030</td>
+      <td>-0.315</td>
+      <td>-0.056</td>
+      <td>2.542</td>
       <td>0.000</td>
       <td>1.000</td>
       <td>0.000</td>
       <td>0.000</td>
     </tr>
     <tr>
-      <td>2026-07-13 00:00:00-04:00</td>
-      <td>3997.000</td>
-      <td>-0.318</td>
-      <td>-0.090</td>
-      <td>2.700</td>
+      <td>2026-07-14</td>
+      <td>4052.880</td>
+      <td>-0.348</td>
+      <td>-0.131</td>
+      <td>2.777</td>
       <td>0.000</td>
       <td>1.000</td>
       <td>0.000</td>
       <td>0.000</td>
     </tr>
     <tr>
-      <td>2026-07-14 00:00:00-04:00</td>
-      <td>4061.100</td>
-      <td>-0.351</td>
-      <td>-0.102</td>
-      <td>2.765</td>
+      <td>2026-07-15</td>
+      <td>4060.480</td>
+      <td>-0.377</td>
+      <td>-0.018</td>
+      <td>2.243</td>
       <td>0.000</td>
       <td>1.000</td>
       <td>0.000</td>
       <td>0.000</td>
     </tr>
     <tr>
-      <td>2026-07-15 00:00:00-04:00</td>
-      <td>4076.200</td>
-      <td>-0.379</td>
-      <td>-0.009</td>
-      <td>2.237</td>
+      <td>2026-07-16</td>
+      <td>3987.620</td>
+      <td>-0.390</td>
+      <td>0.053</td>
+      <td>1.948</td>
       <td>0.000</td>
       <td>1.000</td>
       <td>0.000</td>
@@ -629,120 +629,6 @@ sample's text stream is zeroed with p=0.4. (4) <b>Deep supervision</b> keeps the
 expert a complete forecaster so the blend cannot collapse into XGBoost. (5) Checkpoints
 selected by <b>validation directional accuracy</b>. Conviction throughout is the
 <b>t-statistic |μ|/σ</b> from the probabilistic head.</p>
-
-<p><b>Seed 9</b> — test DirAcc 0.560 · first test-set forecast origins from
-<code>exports/predictions_test_Hybrid_CNN_LSTM_Transformer_seed9.csv</code>
-(h1 = next bar, h10 = cumulative 10 bars ahead, log-return units):</p>
-<table class="dataframe">
-  <thead>
-    <tr style="text-align: right;">
-      <th>origin</th>
-      <th>actual_h1</th>
-      <th>pred_h1</th>
-      <th>actual_h10</th>
-      <th>pred_h10</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>2022-08-25 00:00:00-04:00</td>
-      <td>-0.01236</td>
-      <td>+0.00036</td>
-      <td>-0.02389</td>
-      <td>+0.00244</td>
-    </tr>
-    <tr>
-      <td>2022-08-26 00:00:00-04:00</td>
-      <td>+0.00029</td>
-      <td>+0.00085</td>
-      <td>-0.00462</td>
-      <td>+0.00297</td>
-    </tr>
-    <tr>
-      <td>2022-08-29 00:00:00-04:00</td>
-      <td>-0.00775</td>
-      <td>+0.00058</td>
-      <td>-0.01836</td>
-      <td>+0.00526</td>
-    </tr>
-  </tbody>
-</table>
-
-<p><b>Seed 36</b> — test DirAcc 0.560 · first test-set forecast origins from
-<code>exports/predictions_test_Hybrid_CNN_LSTM_Transformer_seed36.csv</code>
-(h1 = next bar, h10 = cumulative 10 bars ahead, log-return units):</p>
-<table class="dataframe">
-  <thead>
-    <tr style="text-align: right;">
-      <th>origin</th>
-      <th>actual_h1</th>
-      <th>pred_h1</th>
-      <th>actual_h10</th>
-      <th>pred_h10</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>2022-08-25 00:00:00-04:00</td>
-      <td>-0.01236</td>
-      <td>+0.00023</td>
-      <td>-0.02389</td>
-      <td>+0.00045</td>
-    </tr>
-    <tr>
-      <td>2022-08-26 00:00:00-04:00</td>
-      <td>+0.00029</td>
-      <td>+0.00099</td>
-      <td>-0.00462</td>
-      <td>-0.00005</td>
-    </tr>
-    <tr>
-      <td>2022-08-29 00:00:00-04:00</td>
-      <td>-0.00775</td>
-      <td>+0.00046</td>
-      <td>-0.01836</td>
-      <td>+0.00321</td>
-    </tr>
-  </tbody>
-</table>
-
-<p><b>Seed 99</b> — test DirAcc 0.554 · first test-set forecast origins from
-<code>exports/predictions_test_Hybrid_CNN_LSTM_Transformer_seed99.csv</code>
-(h1 = next bar, h10 = cumulative 10 bars ahead, log-return units):</p>
-<table class="dataframe">
-  <thead>
-    <tr style="text-align: right;">
-      <th>origin</th>
-      <th>actual_h1</th>
-      <th>pred_h1</th>
-      <th>actual_h10</th>
-      <th>pred_h10</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>2022-08-25 00:00:00-04:00</td>
-      <td>-0.01236</td>
-      <td>-0.00041</td>
-      <td>-0.02389</td>
-      <td>+0.00023</td>
-    </tr>
-    <tr>
-      <td>2022-08-26 00:00:00-04:00</td>
-      <td>+0.00029</td>
-      <td>+0.00089</td>
-      <td>-0.00462</td>
-      <td>+0.00180</td>
-    </tr>
-    <tr>
-      <td>2022-08-29 00:00:00-04:00</td>
-      <td>-0.00775</td>
-      <td>+0.00054</td>
-      <td>-0.01836</td>
-      <td>+0.00405</td>
-    </tr>
-  </tbody>
-</table>
 
 <h2>6. Baselines vs the Hybrid model</h2>
 <p>Per the dissertation objective, the comparison is <b>classical econometrics vs the
@@ -833,33 +719,33 @@ rows are directly comparable:</p>
   <tbody>
     <tr>
       <td>Gold (XAU/USD)</td>
-      <td>963</td>
-      <td>0.5673</td>
-      <td>0.0200</td>
-      <td>0.0284</td>
-      <td>0.5719</td>
-      <td>0.5783</td>
-      <td>0.5060</td>
+      <td>1202</td>
+      <td>0.5355</td>
+      <td>0.0132</td>
+      <td>0.0198</td>
+      <td>0.5399</td>
+      <td>0.5351</td>
+      <td>0.4859</td>
     </tr>
     <tr>
       <td>Silver (XAG/USD)</td>
-      <td>963</td>
-      <td>0.4965</td>
-      <td>0.0419</td>
-      <td>0.0609</td>
-      <td>0.5108</td>
-      <td>0.4891</td>
-      <td>0.5245</td>
+      <td>1202</td>
+      <td>0.4907</td>
+      <td>0.0283</td>
+      <td>0.0430</td>
+      <td>0.4910</td>
+      <td>0.5519</td>
+      <td>0.5176</td>
     </tr>
     <tr>
       <td>Euro (EUR/USD)</td>
-      <td>870</td>
-      <td>0.5032</td>
-      <td>0.0077</td>
-      <td>0.0103</td>
-      <td>0.5718</td>
-      <td>0.4828</td>
-      <td>0.4977</td>
+      <td>1201</td>
+      <td>0.6112</td>
+      <td>0.0023</td>
+      <td>0.0031</td>
+      <td>0.6575</td>
+      <td>0.4958</td>
+      <td>0.4958</td>
     </tr>
   </tbody>
 </table>
@@ -976,22 +862,22 @@ This is itself a textbook efficient-markets result and is reported as such.</p>
 and GARCH 0.577 (full walk-forward, all 962 test origins).
 The econometric baselines model conditional mean/variance directly and are strong on
 noisy bars; the chart shows the mean ± std over seeds against the 0.50 coin-flip line.</p>
-<img src="charts_final/diracc_mean_std.png" alt="mean diracc">
-<img src="charts_final/per_seed_diracc.png" alt="per-seed diracc">
+<img src="charts_final\diracc_mean_std.png" alt="mean diracc">
+<img src="charts_final\per_seed_diracc.png" alt="per-seed diracc">
 <p><b>Scenario B: act only on confident signals.</b> The Hybrid's mean conviction curve:
-<b>0.558 unfiltered → 0.600 @20% → 0.594 @10% → 0.621 @5% coverage</b> — accuracy rises monotonically as it speaks more selectively, evidence
+<b></b> — accuracy rises monotonically as it speaks more selectively, evidence
 that its forecast magnitude is informative conviction, not noise. The deployable,
 validation-calibrated version of this rule and its costed backtest are in Section 8.
 ARIMA/GARCH now appear on the same curve, computed from their full-resolution
 walk-forward forecasts.</p>
-<img src="charts_final/conviction_coverage.png" alt="conviction coverage">
-<p><b>Scenario C: longer horizons.</b> Per-horizon accuracy on the cumulative return (ensemble: h1 0.550 vs h10 0.573)
+<img src="" alt="conviction coverage">
+<p><b>Scenario C: longer horizons.</b> Per-horizon accuracy on the cumulative return
 shows where in the 10-bar horizon the model earns its accuracy.</p>
-<img src="charts_final/per_horizon_diracc.png" alt="per horizon">
+<img src="" alt="per horizon">
 <p><b>Scenario D: magnitude error (MAE).</b> The econometric baselines typically win on
 pure magnitude — expected on near-random-walk returns, and why MAE alone is a misleading
 model-selection criterion for directional trading.</p>
-<img src="charts_final/mae_comparison.png" alt="mae">
+<img src="charts_final\mae_comparison.png" alt="mae">
 
 <h2>8. Roadmap implementation results, final verdict &amp; next steps</h2>
 <p>Every improvement recommended across the review rounds is now implemented and measured
@@ -1140,7 +1026,7 @@ change, stay flat otherwise. Accuracy is a proxy; this is the decision-grade met
     </tr>
   </tbody>
 </table>
-<img src="charts_final/backtest_equity.png" alt="backtest equity">
+<img src="charts_final\backtest_equity.png" alt="backtest equity">
 
 <p><b>Adaptive-expert cadence sweep — where GARCH's edge actually comes from.</b>
 A diagnostic showed GARCH's directional lead is <i>not</i> the drift statistic itself
@@ -1283,7 +1169,7 @@ per named feature. Lowest-importance candidates for removal in a future round:
 pathway consumes the same features sequentially (e.g. the one-hot signal columns act
 through the CNN conditioning embedding), so low tree-importance alone does not justify
 removal; it flags candidates for an ablation.</p>
-<img src="charts_final/feature_importance.png" alt="feature importance">
+<img src="charts_final\feature_importance.png" alt="feature importance">
 
 <h3>Final verdict</h3>
 <div class="callout"><b>Where this run landed:</b> Hybrid unfiltered DirAcc
@@ -1319,9 +1205,9 @@ the probabilistic forecaster.</li>
 
 <h2>9. Summary &amp; conclusion</h2>
 <p>This project built and honestly evaluated a complete multi-modal FX forecasting
-system: <b>6,491 live daily XAU/USD candles</b> from yfinance
+system: <b>300 live daily XAU/USD candles</b> from yfinance
 (daily runs use the full listed history), a real news pipeline (Google News RSS with a
-dedicated Reuters lane + GDELT archive + direct RSS, <b>19,177</b> FinBERT-scored
+dedicated Reuters lane + GDELT archive + direct RSS, <b>19,195</b> FinBERT-scored
 headlines with 100% test-set coverage), <b>REAL macro (Yahoo rates/DXY + BLS CPI)</b>, <b>35 engineered
 features</b> (16 technical incl. GARCH-style drift / 6 macro / 13 sentiment incl.
 diffusion breadth), and a dual-tower Hybrid CNN-LSTM-Transformer: a causal-dilated CNN +
@@ -1347,6 +1233,6 @@ intermediate artifact (prices, scored headlines, macro series, per-bar features,
 and ensemble predictions) is exported as CSV under <code>exports/</code> for independent
 verification, and the full evidence trail of every architecture iteration is in the git
 history.</p>
-<p class="small">Generated from: multi_seed_summary.json · roadmap_summary.json ·
+<p class="small">Generated from: results/multi_seed_summary.json · results/roadmap_summary.json ·
 exports/*.csv · seeds 9/36/99.</p>
 </body></html>
