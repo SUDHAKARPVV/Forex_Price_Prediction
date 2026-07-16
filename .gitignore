@@ -3,6 +3,12 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 
+# Virtualenvs -- 1.5GB of recreatable packages; never commit these.
+# (.venv only stayed out of git by luck: venv writes its own .gitignore.)
+.venv/
+venv/
+env/
+
 # OS / editor
 .DS_Store
 .vscode/
