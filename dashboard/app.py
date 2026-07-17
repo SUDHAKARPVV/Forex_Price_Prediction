@@ -177,9 +177,29 @@ def _build_live_panel(pair: str, interval: str, bar_key: str, fetch_news: bool):
         _os.environ.pop("FOREX_OFFLINE_NEWS", None)      # live news top-up (slow)
     else:
         _os.environ["FOREX_OFFLINE_NEWS"] = "1"          # cached archive (fast)
-    return build_fx_panel(pair=pair, n_days=10000, source="real",
-                          real_interval=interval,
-                          export_artifacts=False, use_fetch_cache=False)
+    kwargs = dict(pair=pair, n_days=10000, source="real", real_interval=interval,
+                  export_artifacts=False, use_fetch_cache=False)
+    try:
+        return build_fx_panel(**kwargs)
+    except TypeError as te:
+        if "unexpected keyword argument" not in str(te):
+            raise
+        # SELF-HEAL for stale in-memory modules. Streamlit re-executes app.py
+        # from disk on every rerun, but sys.modules pins imported modules at
+        # whatever version the server process booted with -- so a server that
+        # outlives a code change calls NEW app.py against OLD data.dataset and
+        # dies exactly here ("unexpected keyword argument"). Streamlit CLOUD
+        # does the same on git-push hot-reloads. Reload the data.* family in
+        # dependency order (leaves first, so from-imports rebind), then retry.
+        import importlib
+        import sys as _sys
+        print("[live] stale data.* modules detected -- reloading in-place ...")
+        for name in ("data.pairs", "data.mt5_feed", "data.technical_indicators",
+                     "data.sentiment", "data.real_data_feed", "data.dataset"):
+            if name in _sys.modules:
+                importlib.reload(_sys.modules[name])
+        from data.dataset import build_fx_panel as _fresh_build
+        return _fresh_build(**kwargs)
 
 
 def compute_live_forecast(hybrid, xgb, pair="XAU/USD", fetch_news=False):
@@ -773,8 +793,16 @@ elif page.startswith("🔮"):
                    if fetch_news else "Fetching live price + macro, aligning cached news, and running the model …")
             with st.spinner(msg):
                 st.session_state[f"live_fc_{PAIR}"] = compute_live_forecast(hybrid, xgb, pair=PAIR, fetch_news=fetch_news)
+        except TypeError as e:
+            # A TypeError here is a CODE-VERSION problem (server process older
+            # than the code it is executing), never a data/network problem --
+            # labelling it "network unavailable" sent debugging down the wrong
+            # path once already.
+            st.error(f"Live prediction failed: the dashboard server is running "
+                     f"stale code ({e}). Restart the Streamlit server (or reboot "
+                     f"the Streamlit Cloud app) to load the current modules.")
         except Exception as e:
-            st.error(f"Live fetch failed (network / data source unavailable): {e}")
+            st.error(f"Live fetch failed ({type(e).__name__}): {e}")
 
     if f"live_fc_{PAIR}" in st.session_state:
         F = st.session_state[f"live_fc_{PAIR}"]
