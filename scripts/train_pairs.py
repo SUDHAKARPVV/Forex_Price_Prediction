@@ -102,10 +102,17 @@ def garch_expert_for(panel, datasets, pair=None, workers=6, stride=10):
     return by
 
 
-def arima_walk_forward(panel, test_ds, horizon, stride=5):
-    """ARIMA(2,1,2) refit every `stride` test origins (it is slow); the gap
-    is filled forward so every window gets a forecast. Directional metric on
-    the sign of the cumulative-return forecast."""
+def arima_walk_forward(panel, test_ds, horizon, stride=25, fit_window=5000):
+    """ARIMA(2,1,2) refit every `stride` test origins; the gap is filled
+    forward so every window gets a forecast. Directional metric on the sign of
+    the cumulative-return forecast.
+
+    stride=25 (~1 trading day at H1) and fit_window=5000 (~10 months of hourly
+    bars) replace stride=5 on the FULL history: euro's tail was ~1,966 fits on
+    an up-to-65k-point series (~2h serial). ARIMA(2,1,2) is a short-memory
+    model -- its parameters neither need 16 years of data nor move materially
+    within a day -- and every fit still sees ONLY data before its origin, so the
+    walk-forward contract is unchanged. ~400 fits on 5k points ≈ minutes."""
     logc = np.log(np.asarray(panel.close, dtype=np.float64))
     origins = list(test_ds.indices)
     yt, yp = [], []
@@ -115,7 +122,8 @@ def arima_walk_forward(panel, test_ds, horizon, stride=5):
             continue
         if i % stride == 0 or last is None:
             try:
-                last = arima_multistep_forecast(panel.close[: t + 1], horizon)
+                lo = max(0, t + 1 - fit_window)
+                last = arima_multistep_forecast(panel.close[lo: t + 1], horizon)
             except Exception:
                 last = np.zeros(horizon)
         yt.append(logc[t + 1: t + 1 + horizon] - logc[t])

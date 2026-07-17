@@ -1,0 +1,50 @@
+{
+  "XAUUSD": {
+    "unfiltered_diracc": 0.5125524362697644,
+    "origin_rule": {
+      "diracc": 0.563727959697733,
+      "n_origins": 1985,
+      "coverage": 0.21350973432289985,
+      "diracc_half1": 0.5825484764542936,
+      "diracc_half2": 0.5411308203991131
+    },
+    "per_horizon_committee": {
+      "diracc": 0.5614810449813397,
+      "n_pairs": 20364,
+      "pair_coverage": 0.21903839948370443
+    },
+    "gate_threshold_abs_drift_tstat": 0.216509610414505
+  },
+  "XAGUSD": {
+    "unfiltered_diracc": 0.5096798372416746,
+    "origin_rule": {
+      "diracc": 0.511830131445905,
+      "n_origins": 1978,
+      "coverage": 0.2117999785844309,
+      "diracc_half1": 0.5196756756756756,
+      "diracc_half2": 0.5049382716049383
+    },
+    "per_horizon_committee": {
+      "diracc": 0.5255069708491762,
+      "n_pairs": 18936,
+      "pair_coverage": 0.20276260841631866
+    },
+    "gate_threshold_abs_drift_tstat": 0.2053416669368744
+  },
+  "EURUSD": {
+    "unfiltered_diracc": 0.5032153032153032,
+    "origin_rule": {
+      "diracc": 0.47433392539964475,
+      "n_origins": 1126,
+      "coverage": 0.11457061457061457,
+      "diracc_half1": 0.45813953488372094,
+      "diracc_half2": 0.4997716894977169
+    },
+    "per_horizon_committee": {
+      "diracc": 0.5117411850236278,
+      "n_pairs": 13755,
+      "pair_coverage": 0.13995726495726496
+    },
+    "gate_threshold_abs_drift_tstat": 0.2169511914253235
+  }
+}
