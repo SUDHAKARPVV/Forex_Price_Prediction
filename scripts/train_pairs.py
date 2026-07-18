@@ -150,9 +150,16 @@ def _truncate_panel(panel, bars: int):
     )
 
 
+def _resolve_device(device: str) -> str:
+    if device == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    return device
+
+
 def run_pair(pair: str, interval: str = "4h", bars: int = None,
-             epochs: int = None, source: str = "real",
-             train_stride: int = 1, refit_every: int = 14) -> dict:
+             epochs: int = None, source: str = "panel",
+             train_stride: int = 1, refit_every: int = 14,
+             device: str = "auto", batch_size: int = None) -> dict:
     cfg = get_pair(pair)
     smoke = bars is not None
     print(f"\n===== {cfg.name} ({cfg.label}) @ {interval}"
@@ -204,16 +211,23 @@ def run_pair(pair: str, interval: str = "4h", bars: int = None,
     wf = walk_forward_expert_preds(tr, va, te, refit_every=refit_every)
     te_x = XGBAugmentedDataset(te, xgb, preds=wf, garch_preds=_g(te))
 
+    dev = _resolve_device(device)
+    # Bigger batches on GPU keep the accelerator fed (CPU stays at the configured
+    # default). Override with --batch-size.
+    bs = batch_size or (256 if dev == "cuda" else TRAIN_CFG.batch_size)
+    print(f"[train_pairs] device={dev}"
+          + (f" ({torch.cuda.get_device_name(0)})" if dev == "cuda" else "")
+          + f" | batch_size={bs}")
     torch.manual_seed(SEED)
     hybrid = HybridCNNLSTMTransformer()
     tr_text = _text_dense_subset(tr_x, panel, TRAIN_CFG.two_stage_text_from)
     va_text = _text_dense_subset(va_x, panel, TRAIN_CFG.two_stage_text_from)
     hybrid, _ = train_two_stage(hybrid, tr_x, va_x, tr_text, va_text,
                                 epochs=(epochs or TRAIN_CFG.epochs), lr=TRAIN_CFG.lr * 0.5,
-                                device="cpu",
+                                device=dev, batch_size=bs,
                                 classification_weight=TRAIN_CFG.classification_loss_weight,
                                 seed=SEED)
-    rep, y_true, y_pred, band = evaluate_deep_model(hybrid, te_x, f"Hybrid_{cfg.slug}", device="cpu")
+    rep, y_true, y_pred, band = evaluate_deep_model(hybrid, te_x, f"Hybrid_{cfg.slug}", device=dev)
 
     # baselines on the same test windows
     logc = np.log(np.asarray(panel.close, dtype=np.float64))
@@ -275,21 +289,25 @@ def main():
                     help="focus is XAUUSD 1H; pass e.g. --pairs XAG/USD EUR/USD to include others")
     ap.add_argument("--interval", default="1h",
                     help="candle interval: 1h (H1, default/canonical). 4h/1d retained for legacy runs only")
-    ap.add_argument("--source", default="real", choices=["real", "panel"],
-                    help="'real' rebuilds from the feeds; 'panel' loads the frozen "
-                         "feature panel (fast -- use for smoke runs)")
+    ap.add_argument("--source", default="panel", choices=["real", "panel"],
+                    help="'panel' (default) loads the FROZEN feature panel -- reproducible, "
+                         "no MT5/macro/FinBERT needed (ideal for Colab). 'real' rebuilds from feeds.")
     ap.add_argument("--bars", type=int, default=None,
                     help="SMOKE TEST: use only the last N bars. Note GARCH needs "
                          ">=250 bars (MIN_HISTORY) or its expert/baseline is skipped.")
     ap.add_argument("--epochs", type=int, default=None,
                     help="override the configured epoch budget (smoke runs)")
-    ap.add_argument("--train-stride", type=int, default=1,
+    ap.add_argument("--train-stride", type=int, default=3,
                     help="keep every Nth TRAIN/VAL origin (test is never strided). "
-                         "Hourly windows overlap ~98%%, so 3 cuts epoch cost ~3x "
-                         "with little information loss.")
-    ap.add_argument("--refit-every", type=int, default=14,
-                    help="walk-forward XGBoost refit interval in test windows. "
-                         "Use ~100 at H1: 14 would mean ~664 refits/pair.")
+                         "Hourly windows overlap ~98%%, so 3 cuts epoch cost ~3x. "
+                         "Use 1 on GPU where epochs are cheap.")
+    ap.add_argument("--refit-every", type=int, default=100,
+                    help="walk-forward XGBoost refit interval in test windows "
+                         "(H1 default 100; 14 would mean ~664 refits/pair).")
+    ap.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"],
+                    help="'auto' uses CUDA when available (Colab GPU), else CPU.")
+    ap.add_argument("--batch-size", type=int, default=None,
+                    help="override batch size (auto: 256 on GPU, 32 on CPU).")
     args = ap.parse_args()
 
     summary = {}
@@ -297,7 +315,8 @@ def main():
         summary[get_pair(pair).slug] = run_pair(
             pair, interval=args.interval, bars=args.bars,
             epochs=args.epochs, source=args.source,
-            train_stride=args.train_stride, refit_every=args.refit_every)
+            train_stride=args.train_stride, refit_every=args.refit_every,
+            device=args.device, batch_size=args.batch_size)
     os.makedirs("results/pair_metrics", exist_ok=True)
     json.dump(summary, open("results/pair_metrics/all_pairs.json", "w"), indent=2, default=float)
     print("\n[train_pairs] wrote results/pair_metrics/all_pairs.json")
