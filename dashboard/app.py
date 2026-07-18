@@ -88,7 +88,9 @@ def load_model_and_xgb(pair: str = "XAU/USD"):
     xgb.model = joblib.load(os.path.join(ckpt, "xgb.pkl"))  # fitted MultiOutputRegressor
     # second expert: this pair's walk-forward GARCH forecasts (stacked)
     garch_by = _pair_garch_expert(pair, panel, ckpt)
-    gp = None if garch_by is None else np.stack([garch_by[t] for t in test_ds.indices])
+    _gz = np.zeros(DATA_CFG.horizon, dtype="float32")
+    gp = (None if garch_by is None
+          else np.stack([np.asarray(garch_by.get(t, _gz), dtype="float32") for t in test_ds.indices]))
     test_x = XGBAugmentedDataset(test_ds, xgb, garch_preds=gp)
     hybrid = HybridCNNLSTMTransformer()
     hybrid.load_state_dict(torch.load(os.path.join(ckpt, "hybrid.pt"), map_location="cpu"))

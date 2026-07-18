@@ -49,8 +49,12 @@ def main():
     from main import _load_garch_expert
     garch_by = _load_garch_expert(panel)
     import numpy as np
+    _gz = np.zeros(DATA_CFG.horizon, dtype="float32")
     def _g(ds):
-        return None if garch_by is None else np.stack([garch_by[t] for t in ds.indices])
+        # .get(): GARCH covers only origins >= MIN_HISTORY (and may be strided);
+        # uncovered windows carry a zero forecast the trust gate ignores.
+        return (None if garch_by is None
+                else np.stack([np.asarray(garch_by.get(t, _gz), dtype="float32") for t in ds.indices]))
     train_x = XGBAugmentedDataset(train_ds, xgb, garch_preds=_g(train_ds))
     val_x = XGBAugmentedDataset(val_ds, xgb, garch_preds=_g(val_ds))
     test_x = XGBAugmentedDataset(test_ds, xgb, garch_preds=_g(test_ds))

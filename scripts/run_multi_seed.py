@@ -270,9 +270,7 @@ def multi_seed_evaluation(seeds, **run_kwargs):
         print(row)
 
     summary["_meta"] = {"pair": pair, "slug": slug, "interval": interval,
-                        "seeds": list(seeds), "n_test": summary.get(
-                            "Hybrid_CNN_LSTM_Transformer", {}).get(
-                            "DirectionalAccuracy", {}).get("values") and None}
+                        "seeds": list(seeds)}
     with open(ms_path, "w") as f:
         json.dump(summary, f, indent=2, default=float)
     if slug == "XAUUSD":                 # legacy name kept for gold back-compat
@@ -334,7 +332,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", type=int, nargs="+", default=[9, 36, 99])
     parser.add_argument("--pair", type=str, default="XAU/USD")
-    parser.add_argument("--n_days", type=int, default=10000,
+    parser.add_argument("--quick", action="store_true", help="fast smoke test")
+    parser.add_argument("--n_days", type=int, default=100,
                         help="Max bars to keep from the live fetch. Daily interval fetches the "
                              "FULL listed history (GC=F reaches back to 2000), so the default "
                              "no longer caps at 5,000.")
@@ -377,12 +376,22 @@ if __name__ == "__main__":
         except Exception:
             pass
 
-    multi_seed_evaluation(
-        args.seeds,
-        pair=args.pair,
-        n_days=args.n_days,
-        epochs=args.epochs,
-        source=args.source,
-        interval=args.interval,
-        signal_strength=args.signal_strength,
-    )
+    try:
+        multi_seed_evaluation(
+            args.seeds,
+            pair=args.pair,
+            n_days=args.n_days,
+            epochs=args.epochs,
+            quick=args.quick,
+            source=args.source,
+            interval=args.interval,
+            signal_strength=args.signal_strength,
+        )
+    except Exception:
+        import traceback
+        tb = traceback.format_exc()
+        _os.makedirs("results", exist_ok=True)
+        with open("results/run_multi_seed_error.log", "w", encoding="utf-8") as _f:
+            _f.write(tb)
+        print("[fatal] exception occurred; traceback written to results/run_multi_seed_error.log")
+        raise
