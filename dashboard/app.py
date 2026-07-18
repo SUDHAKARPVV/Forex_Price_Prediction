@@ -261,6 +261,27 @@ def compute_live_forecast(hybrid, xgb, pair="XAU/USD", fetch_news=False):
     fn = list(fresh.feature_names)
     news_days = int((raw[:, fn.index("sig_none")] == 0).sum()) if "sig_none" in fn else None
 
+    # The actual NEWS FEED behind the window's sentiment features: headlines
+    # from this pair's scored archive whose timestamps fall inside the input
+    # window (plus the 24h trailing alignment reach of the earliest bar).
+    recent_news = None
+    try:
+        from data.pairs import get_pair as _gp
+        from data.real_data_feed import news_archive_path as _nap
+        _arch = _nap(_gp(pair).ticker)
+        if os.path.exists(_arch):
+            _nd = pd.read_csv(_arch, parse_dates=["timestamp"])
+            _ts = pd.to_datetime(_nd["timestamp"], errors="coerce", utc=True).dt.tz_localize(None)
+            _lo = pd.Timestamp(fresh.dates[-L]) - pd.Timedelta(hours=24)
+            _hi = pd.Timestamp(fresh.dates[-1])
+            _in = _nd[(_ts >= _lo) & (_ts <= _hi)].copy()
+            _in["timestamp"] = _ts[(_ts >= _lo) & (_ts <= _hi)]
+            cols = [c for c in ("timestamp", "title", "polarity", "confidence") if c in _in.columns]
+            recent_news = (_in[cols].sort_values("timestamp", ascending=False)
+                           .head(60).to_dict("records"))
+    except Exception as _e:
+        print(f"[live] recent-news lookup failed (non-fatal): {_e}")
+
     return {"forecast": fc, "band": band, "deep_forecast": deep, "xgb_trust": xtrust,
             "attn_weights": attn_w, "presence": presence, "news_days": news_days,
             "last_date": str(fresh.dates[-1])[:10], "last_close": float(fresh.close[-1]),
@@ -269,7 +290,8 @@ def compute_live_forecast(hybrid, xgb, pair="XAU/USD", fetch_news=False):
             "feature_names": fn, "nq": int(nq),
             "window_dates": [str(d)[:10] for d in fresh.dates[-L:]],
             "window_close": np.asarray(fresh.close[-L:], dtype=float).tolist(),
-            "window_raw": raw}
+            "window_raw": raw,
+            "recent_news": recent_news}
 
 
 def events_table(dates):
@@ -843,9 +865,59 @@ elif page.startswith("🔮"):
             pf.update_layout(height=250, template="plotly_white", margin=dict(l=0, r=0, t=10, b=0),
                              yaxis_title=f"{PCFG.name} close", xaxis_title="last 60 bars (live)")
             st.plotly_chart(pf, use_container_width=True)
-            with st.expander("📈 Live FX rates — last 60 days (table, newest first)"):
+            with st.expander("📈 Live FX rates — last 60 bars (table, newest first)"):
                 st.dataframe(pd.DataFrame({"date": wds, "close": np.round(wcl, 2)}).iloc[::-1],
                              use_container_width=True, hide_index=True)
+
+            # ---- MACRO FEED used for this prediction ----
+            _fn = F.get("feature_names") or []
+            _macro_cols = [c for c in ("rate_z21", "yield_chg5", "dollar_ret5",
+                                       "cpi_yoy", "cpi_mom", "days_since_cpi") if c in _fn]
+            if wraw is not None and _macro_cols:
+                with st.expander(f"📉 Macro feed used — {len(_macro_cols)} indicators over the window"):
+                    _wr = np.asarray(wraw)
+                    mdf = pd.DataFrame({c: _wr[:, _fn.index(c)] for c in _macro_cols})
+                    mdf.insert(0, "date", wds)
+                    mfig = go.Figure()
+                    for c in ("rate_z21", "yield_chg5", "dollar_ret5"):
+                        if c in mdf.columns:
+                            mfig.add_trace(go.Scatter(x=wds, y=mdf[c], name=c, mode="lines"))
+                    mfig.update_layout(height=220, template="plotly_white",
+                                       margin=dict(l=0, r=0, t=10, b=0),
+                                       legend=dict(orientation="h", y=1.15))
+                    st.plotly_chart(mfig, use_container_width=True)
+                    st.dataframe(mdf.round(4).iloc[::-1], use_container_width=True, hide_index=True)
+                    st.caption("Real daily macro (Yahoo ^IRX/^TNX/DXY + BLS CPI), forward-filled with a "
+                               "strict 1-day lag — a bar only ever sees the PREVIOUS day's close (no look-ahead).")
+
+            # ---- NEWS FEED used for this prediction ----
+            _sent_cols = [c for c in ("sent_mean", "sent_diffusion", "headline_count_z",
+                                      "sig_buy", "sig_sell", "sig_hold", "sig_none") if c in _fn]
+            _news = F.get("recent_news")
+            with st.expander(f"🗞️ News feed used — headlines in the window"
+                             f"{f' ({len(_news)})' if _news else ''} + per-bar sentiment"):
+                if wraw is not None and _sent_cols:
+                    _wr = np.asarray(wraw)
+                    sfig = go.Figure()
+                    for c in ("sent_mean", "sent_diffusion"):
+                        if c in _sent_cols:
+                            sfig.add_trace(go.Scatter(x=wds, y=_wr[:, _fn.index(c)], name=c, mode="lines"))
+                    sfig.update_layout(height=200, template="plotly_white",
+                                       margin=dict(l=0, r=0, t=10, b=0),
+                                       legend=dict(orientation="h", y=1.2))
+                    st.plotly_chart(sfig, use_container_width=True)
+                if _news:
+                    ndf = pd.DataFrame(_news)
+                    if "polarity" in ndf.columns:
+                        ndf["polarity"] = ndf["polarity"].round(3)
+                    st.dataframe(ndf, use_container_width=True, hide_index=True)
+                    st.caption("FinBERT-scored headlines from this pair's archive whose timestamps fall "
+                               "inside the input window (incl. the 24h trailing alignment reach). "
+                               "These are the rows behind the sentiment features above.")
+                else:
+                    st.info("No headlines fell inside this window — the sentiment stream carries the "
+                            "explicit 'none' signal, the state modality-masking trains the model for.")
+
             if wraw is not None:
                 fdf = pd.DataFrame(np.asarray(wraw).round(4), columns=F["feature_names"])
                 fdf.insert(0, "date", wds)
@@ -1048,6 +1120,36 @@ elif page.startswith("📈"):
         st.caption(f"Data window {pm.get('date_start','?')} → {pm.get('date_end','?')} · "
                    f"{pm.get('bars','?')} bars · {pm.get('n_params', 0):,} params · "
                    f"lookback {pm.get('lookback','?')} / horizon {pm.get('horizon','?')} bars.")
+
+        # ---- H1 Trend-Gated Committee (selective accuracy) — every pair ----
+        # Rendered with its base-rate control up front: the drift gate selects
+        # trending origins, so the honest benchmark is the best naive rule on
+        # the SAME subset, not 0.50.
+        tgc_h1 = (load_json("results/tgc_h1.json") or {}).get(PCFG.slug)
+        if tgc_h1:
+            st.subheader("🎯 Selective accuracy — Trend-Gated Committee (H1)")
+            o = tgc_h1["origin_rule"]
+            sub = tgc_h1.get("selected_subset", {})
+            c1, c2, c3, c4 = st.columns(4)
+            metric_card(c1, "TGC DirAcc", f"{o['diracc']:.4f}", TEAL,
+                        f"at {o['coverage']*100:.1f}% coverage ({o['n_origins']:,} origins)")
+            metric_card(c2, "Subset naive baseline", f"{sub.get('best_naive_diracc', float('nan')):.4f}",
+                        NAVY, f"best fixed rule on the SAME gated origins")
+            edge = sub.get("tgc_edge_vs_naive_pp")
+            metric_card(c3, "True edge vs naive", f"{edge:+.1f}pp" if edge is not None else "—",
+                        GREEN if (edge or 0) > 0 else SLATE, "the honest skill measure")
+            metric_card(c4, "Split-half", f"{o['diracc_half1']:.3f} / {o['diracc_half2']:.3f}",
+                        SLATE, "1st / 2nd half of test")
+            if (edge or 0) <= 0:
+                st.warning(
+                    f"**Honest reading:** the committee's {o['diracc']:.4f} does **not** beat the best "
+                    f"naive directional rule on the same gated origins ({sub.get('best_naive_diracc', 0):.4f} — "
+                    f"the gate selects periods that trend {sub.get('up_fraction', 0)*100:.0f}% one way). "
+                    f"At H1, selective accuracy shows no genuine skill for {PCFG.label}. "
+                    f"This base-rate control is the methodological contribution.", icon="⚖️")
+            else:
+                st.success(f"TGC beats the subset-naive baseline by {edge:+.1f}pp — genuine selective skill.",
+                           icon="🎯")
 
     # ---- GOLD deep-dive: 3-seed stability, TGC, ablation, cross-pair ----
     # These are gold-specific project analyses (run_multi_seed.py / roadmap).

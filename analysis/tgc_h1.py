@@ -118,6 +118,12 @@ def committee(y_true, hyb, gch, drift, thr):
     half = len(sel) // 2
     m1 = sel.copy(); m1[half:] = False
     m2 = sel.copy(); m2[:half] = False
+    # THE DECISIVE CONTROL: compare against the best naive directional rule on
+    # the SAME selected origins. The drift gate deliberately picks trending
+    # periods, so the subset's up-fraction is not ~50% -- any committee number
+    # must beat THIS, not the global base rate, to demonstrate skill.
+    up = float((y_true[sel] > 0).mean()) if sel.sum() else float("nan")
+    naive = float(max(up, 1 - up)) if sel.sum() else float("nan")
     return {
         "unfiltered_diracc": float((np.sign(hyb) == np.sign(y_true)).mean()),
         "origin_rule": {"diracc": da_o, "n_origins": n_o,
@@ -127,6 +133,9 @@ def committee(y_true, hyb, gch, drift, thr):
                                   "n_pairs": int(tot),
                                   "pair_coverage": float(tot / y_true.size)},
         "gate_threshold_abs_drift_tstat": thr,
+        "selected_subset": {"up_fraction": up, "best_naive_diracc": naive,
+                            "tgc_edge_vs_naive_pp": round((da_o - naive) * 100, 2)
+                            if sel.sum() else float("nan")},
     }
 
 

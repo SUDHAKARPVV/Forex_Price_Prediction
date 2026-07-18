@@ -13,7 +13,12 @@
       "n_pairs": 20364,
       "pair_coverage": 0.21903839948370443
     },
-    "gate_threshold_abs_drift_tstat": 0.216509610414505
+    "gate_threshold_abs_drift_tstat": 0.216509610414505,
+    "selected_subset": {
+      "up_fraction": 0.5696725440806045,
+      "best_naive_diracc": 0.5696725440806045,
+      "tgc_edge_vs_naive_pp": -0.59
+    }
   },
   "XAGUSD": {
     "unfiltered_diracc": 0.5096798372416746,
@@ -29,7 +34,12 @@
       "n_pairs": 18936,
       "pair_coverage": 0.20276260841631866
     },
-    "gate_threshold_abs_drift_tstat": 0.2053416669368744
+    "gate_threshold_abs_drift_tstat": 0.2053416669368744,
+    "selected_subset": {
+      "up_fraction": 0.5292719919110213,
+      "best_naive_diracc": 0.5292719919110213,
+      "tgc_edge_vs_naive_pp": -1.74
+    }
   },
   "EURUSD": {
     "unfiltered_diracc": 0.5032153032153032,
@@ -45,6 +55,11 @@
       "n_pairs": 13755,
       "pair_coverage": 0.13995726495726496
     },
-    "gate_threshold_abs_drift_tstat": 0.2169511914253235
+    "gate_threshold_abs_drift_tstat": 0.2169511914253235,
+    "selected_subset": {
+      "up_fraction": 0.5348134991119006,
+      "best_naive_diracc": 0.5348134991119006,
+      "tgc_edge_vs_naive_pp": -6.05
+    }
   }
 }
