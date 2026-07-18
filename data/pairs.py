@@ -86,29 +86,49 @@ PAIRS: "dict[str, PairConfig]" = {
     ),
     "XAG/USD": PairConfig(
         name="XAG/USD", ticker="SI=F", slug="XAGUSD", label="Silver (XAG/USD)", emoji="🥈",
-        asset_pattern=r"\bsilver\b|xag|silver price|spot silver|comex silver|precious metal|bullion",
+        # 2026-07-19 keyword audit: added silver futures + industrial-demand
+        # terms. Silver is mostly covered inside JOINT metals stories (2,992 of
+        # its 6,077 headlines co-mention gold), so the lanes must ask for those
+        # phrasings explicitly rather than only "silver price".
+        asset_pattern=(r"\bsilver\b|xag|silver price|spot silver|comex silver"
+                       r"|silver futures|precious metal|bullion"),
         macro_pattern=_US_MACRO,
         foreign_pattern=_FX_MAJORS_EM + r"|\beuro\b|eur/usd|\becb\b",
         gnews_lanes={
-            "reuters": '(silver OR "silver price" OR bullion) site:reuters.com',
-            "general": '"silver price" OR "silver prices" OR "silver market" OR "spot silver"',
+            "reuters": '(silver OR "silver price" OR "precious metals") site:reuters.com',
+            "general": ('"silver price" OR "silver prices" OR "silver market" '
+                        'OR "spot silver" OR "silver futures" OR bullion'),
+            # joint-metals + event phrasings the old lanes missed entirely
+            "metals": ('"gold and silver" OR "silver rally" OR "silver surges" '
+                       'OR "silver demand" OR "silver squeeze" OR "precious metals prices"'),
         },
-        gdelt_query='("silver price" OR "silver prices" OR "silver market" OR "spot silver" OR bullion)',
+        gdelt_query=('("silver price" OR "silver prices" OR "silver market" OR "spot silver" '
+                     'OR "silver futures" OR "gold and silver" OR "precious metals")'),
     ),
     "EUR/USD": PairConfig(
         name="EUR/USD", ticker="EURUSD=X", slug="EURUSD", label="Euro (EUR/USD)", emoji="💶",
-        asset_pattern=(r"eur/usd|euro.?dollar|\beuro\b|\beur\b|european central bank"
-                       r"|\becb\b|euro ?zone|euro area|\blagarde\b"),
-        macro_pattern=_US_MACRO + r"|european central bank|\becb\b|\blagarde\b|euro ?zone",
+        # 2026-07-19 keyword audit. Two measured misses: (1) headlines say
+        # "ECB" 3.5x more often than "European Central Bank" (1,589 vs 448 in
+        # our own archive) yet the lanes only searched the spelled-out form;
+        # (2) DRAGHI presided 2016-2019 -- exactly the thin years (190-240
+        # headlines/yr) -- and neither the lanes nor the relevance pattern
+        # knew his name (51 Draghi vs 334 Lagarde headlines).
+        asset_pattern=(r"eur/usd|eurusd|euro.?dollar|\beuro\b|\beur\b|european central bank"
+                       r"|\becb\b|euro ?zone|euro area|\blagarde\b|\bdraghi\b"),
+        macro_pattern=(_US_MACRO + r"|european central bank|\becb\b|\blagarde\b"
+                       r"|\bdraghi\b|euro ?zone"),
         # exclude the OTHER currencies but NOT the euro itself
         foreign_pattern=_FX_MAJORS_EM + r"|\bgold\b|xau|bullion|\bsilver\b|xag",
         gnews_lanes={
-            "reuters": '("EUR/USD" OR euro OR "European Central Bank") site:reuters.com',
+            "reuters": '("EUR/USD" OR euro OR ECB) site:reuters.com',
             "general": ('"EUR/USD" OR "euro dollar" OR "euro rises" OR "euro falls" '
-                        'OR "European Central Bank" OR eurozone'),
+                        'OR ECB OR "European Central Bank" OR eurozone'),
+            # ECB-policy + presidency lane (Draghi era = the thin 2016-2019 years)
+            "ecb": ('"ECB rate" OR "ECB decision" OR "ECB policy" OR Draghi OR Lagarde '
+                    'OR "eurozone inflation" OR "euro zone economy"'),
         },
-        gdelt_query=('("EUR/USD" OR "euro dollar" OR "euro rises" OR "euro falls" '
-                     'OR "European Central Bank" OR eurozone)'),
+        gdelt_query=('("EUR/USD" OR "euro dollar" OR "euro rises" OR "euro falls" OR ECB '
+                     'OR "European Central Bank" OR eurozone OR Draghi OR Lagarde)'),
     ),
 }
 
