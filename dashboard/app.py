@@ -1151,11 +1151,47 @@ elif page.startswith("📈"):
                 st.success(f"TGC beats the subset-naive baseline by {edge:+.1f}pp — genuine selective skill.",
                            icon="🎯")
 
+        # ---- Per-pair deep-dive: 3-seed stability (H1) — every pair ----
+        # Renders when results/multi_seed_<slug>.json exists (produced by the
+        # next `run_multi_seed.py --pair X --interval 1h`); otherwise a clear
+        # pending state, so silver/euro have the section without fabricated data.
+        st.divider()
+        st.subheader("🔬 Deep-dive — 3-seed stability")
+        ms = load_json(f"results/multi_seed_{PCFG.slug}.json")
+        if ms and "Hybrid_CNN_LSTM_Transformer" in ms:
+            mt = ms.get("_meta", {})
+            st.caption(f"Seeds {mt.get('seeds', '?')} · {mt.get('interval','?')} · "
+                       f"mean ± std across seeds — tests whether the result is seed-robust.")
+            nice = {"Hybrid_CNN_LSTM_Transformer": "Hybrid CNN-LSTM-Transformer",
+                    "GARCH": "GARCH", "ARIMA": "ARIMA"}
+            srows, sfig = [], go.Figure()
+            for k, lbl in nice.items():
+                if k in ms and isinstance(ms[k], dict):
+                    da = ms[k]["DirectionalAccuracy"]
+                    srows.append({"Model": lbl, "DirAcc (mean)": round(da["mean"], 4),
+                                  "DirAcc (std)": round(da["std"], 4),
+                                  "MAE": round(ms[k]["MAE"]["mean"], 5)})
+                    sfig.add_trace(go.Bar(name=lbl, x=[f"seed {s}" for s in mt.get("seeds", range(len(da["values"])))],
+                                          y=da["values"]))
+            st.dataframe(pd.DataFrame(srows), use_container_width=True, hide_index=True)
+            sfig.add_hline(y=0.5, line_dash="dot", line_color=SLATE, annotation_text="coin flip")
+            sfig.update_layout(barmode="group", height=300, template="plotly_white",
+                               yaxis_title="Directional accuracy", yaxis_range=[0.45, 0.60],
+                               margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(sfig, use_container_width=True)
+        else:
+            st.info(f"**3-seed stability for {PCFG.label} not computed yet.** It runs with the next training "
+                    f"round:\n\n`python scripts/run_multi_seed.py --pair {PAIR} --interval 1h`\n\n"
+                    f"The single-seed (seed 9) result is the comparison table above; the ablation and "
+                    f"cross-pair analyses are queued for the same round.", icon="🧪")
+
     # ---- GOLD deep-dive: 3-seed stability, TGC, ablation, cross-pair ----
     # These are gold-specific project analyses (run_multi_seed.py / roadmap).
     if PCFG.name == DEFAULT_PAIR and summ:
         st.divider()
         st.subheader("🥇 Gold deep-dive — 3-seed stability, Trend-Gated Committee, ablation")
+        st.caption("⏳ **DAILY-ERA (historical, ~25y daily bars) — superseded by the H1 results above.** "
+                   "Kept for the record; the H1 canonical numbers are the per-pair block at the top of this page.")
         n_test = (meta.get("split", {}).get("test") if meta else None) or 962
         hyb = summ["Hybrid_CNN_LSTM_Transformer"]["DirectionalAccuracy"]["mean"]
         garch = summ.get("GARCH", {}).get("DirectionalAccuracy", {}).get("mean")
@@ -1164,24 +1200,28 @@ elif page.startswith("📈"):
         road = load_json("results/roadmap_summary.json") or {}
         tgc = road.get("trend_gated_committee")
         mc = st.columns(4)
+        _sub = (tgc or {}).get("selected_subset", {})
+        _edge = _sub.get("tgc_edge_vs_naive_pp")
         if tgc:
-            metric_card(mc[0], "Selective DirAcc (TGC)", f"{tgc['origin_rule']['diracc']:.3f}",
-                        GREEN, f"at {tgc['origin_rule']['coverage']*100:.0f}% coverage — target ≥0.60 met")
+            metric_card(mc[0], "TGC DirAcc (daily)", f"{tgc['origin_rule']['diracc']:.3f}",
+                        SLATE, f"at {tgc['origin_rule']['coverage']*100:.0f}% coverage")
         else:
             metric_card(mc[0], "Hybrid Directional Acc.", f"{hyb:.3f}" if hyb else "—", TEAL, "3-seed mean")
-        metric_card(mc[1], "Hybrid (unfiltered)", f"{hyb:.3f}" if hyb else "—", TEAL, "all bars, 3-seed mean")
-        metric_card(mc[2], "GARCH baseline", f"{garch:.3f}" if garch else "—", NAVY, "best econometric baseline")
-        metric_card(mc[3], "Hybrid MAE", f"{hyb_mae:.4f}", GREEN, "lowest among deep configs")
+        metric_card(mc[1], "Subset naive baseline",
+                    f"{_sub.get('best_naive_diracc', float('nan')):.3f}" if _sub else "—",
+                    NAVY, "best fixed rule on same gated origins")
+        metric_card(mc[2], "True edge vs naive", f"{_edge:+.1f}pp" if _edge is not None else "—",
+                    GREEN if (_edge or 0) > 0.5 else SLATE, "the honest skill measure")
+        metric_card(mc[3], "Hybrid (unfiltered)", f"{hyb:.3f}" if hyb else "—", TEAL, "3-seed mean, all bars")
         if tgc:
-            o, p = tgc["origin_rule"], tgc["per_horizon_committee"]
-            st.success(
-                f"**Trend-Gated Committee (selective accuracy):** trade only when the deep seed-ensemble and the "
-                f"GARCH expert **agree on direction** AND the trend-quality gate is open (|drift t-stat| ≥ "
-                f"train-split tercile). **DirAcc {o['diracc']:.4f} at {o['coverage']*100:.1f}% coverage** "
-                f"(split-half {o['diracc_half1']:.3f}/{o['diracc_half2']:.3f}); per-horizon committee "
-                f"**{p['diracc']:.4f}** at {p['pair_coverage']*100:.1f}% pair coverage. Parameter-free / "
-                f"train-calibrated — nothing tuned on the test set. Unfiltered accuracy remains honest at ~0.53.",
-                icon="🎯")
+            o = tgc["origin_rule"]
+            st.warning(
+                f"**Trend-Gated Committee — with the base-rate control.** The daily headline was "
+                f"**{o['diracc']:.4f} at {o['coverage']*100:.1f}% coverage**, but the drift gate selects "
+                f"origins that trend {_sub.get('up_fraction', 0)*100:.0f}% one way, so the honest benchmark is "
+                f"the best fixed rule on those **same** origins ({_sub.get('best_naive_diracc', 0):.4f}). The "
+                f"committee's true edge is **{_edge:+.1f}pp** — within noise. Both daily and H1 selective "
+                f"accuracy dissolve under this control; the base-rate check is itself the contribution.", icon="⚖️")
         st.markdown("")
         nice = {"Hybrid_CNN_LSTM_Transformer": "Hybrid CNN-LSTM-Transformer",
                 "GARCH": "GARCH (AR1-GARCH1,1)", "ARIMA": "ARIMA (walk-forward)"}

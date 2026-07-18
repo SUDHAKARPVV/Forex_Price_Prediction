@@ -125,7 +125,7 @@ def build_consensus_filter(seeds, model="Hybrid_CNN_LSTM_Transformer", cost_bps=
     }
 
 
-def build_trend_gated_committee(seeds, model="Hybrid_CNN_LSTM_Transformer"):
+def build_trend_gated_committee(seeds, model="Hybrid_CNN_LSTM_Transformer", panel_path=None):
     """Trend-Gated Committee (TGC) -- the selective-accuracy headline.
 
     Trade only when (a) the Hybrid seed-ensemble and the GARCH expert AGREE on
@@ -146,10 +146,11 @@ def build_trend_gated_committee(seeds, model="Hybrid_CNN_LSTM_Transformer"):
             return None
         frames.append(pd.read_csv(p))
     gp = f"results/predictions_test_GARCH_seed{seeds[0]}.csv"
-    if not (os.path.exists(gp) and os.path.exists(GOLD_PANEL)):
+    panel_path = panel_path or GOLD_PANEL
+    if not (os.path.exists(gp) and os.path.exists(panel_path)):
         return None
     g = pd.read_csv(gp)
-    panel = pd.read_csv(GOLD_PANEL)
+    panel = pd.read_csv(panel_path)
     if "drift_tstat" not in panel.columns or len(g) != len(frames[0]):
         return None
 
@@ -194,6 +195,14 @@ def build_trend_gated_committee(seeds, model="Hybrid_CNN_LSTM_Transformer"):
     bt = conviction_backtest(a1, g["pred_h1"].values, frames[0]["origin"].values,
                              tau=0.5, mode="follow", cost_bps=2.0,
                              conviction=np.where(ruleD, 1.0, 0.0))
+    # DECISIVE CONTROL: the drift gate selects trending origins, so the honest
+    # benchmark is the best fixed directional rule on the SAME selected origins,
+    # not 0.50. (Applied to the daily gold headline this reduced a 0.622 to a
+    # +0.1pp edge -- i.e. the "lift" was the subset base rate, not skill.)
+    sel_actuals = np.concatenate([frames[0][f"actual_h{hh}"].values[ruleD] for hh in range(1, 11)])
+    up = float((sel_actuals > 0).mean()) if ruleD.any() else float("nan")
+    naive = float(max(up, 1 - up)) if ruleD.any() else float("nan")
+    diracc_o = float(allh(ruleD).mean())
     return {
         "backtest": {k: bt[k] for k in ("total_return_pct", "buy_hold_return_pct",
                                         "annualised_sharpe", "buy_hold_sharpe",
@@ -211,10 +220,25 @@ def build_trend_gated_committee(seeds, model="Hybrid_CNN_LSTM_Transformer"):
             "diracc": float(ph.mean()), "pair_coverage": float(total / (n * 10)),
             "n_pairs": int(total),
         },
+        "selected_subset": {
+            "up_fraction": up, "best_naive_diracc": naive,
+            "tgc_edge_vs_naive_pp": round((diracc_o - naive) * 100, 2) if ruleD.any() else None,
+        },
     }
 
 
 def multi_seed_evaluation(seeds, **run_kwargs):
+    from data.pairs import get_pair, panel_csv_path
+    pair = run_kwargs.get("pair", "XAU/USD")
+    interval = run_kwargs.get("interval", "1d")
+    slug = get_pair(pair).slug
+    ppanel = panel_csv_path(pair)
+    # Per-pair output names so a silver/euro run never clobbers gold's files.
+    # The unslugged legacy names are ALSO written for gold, keeping the existing
+    # (daily-era) dashboard block and paper/make_figures working unchanged.
+    ms_path = f"results/multi_seed_{slug}.json"
+    rm_path = f"results/roadmap_{slug}.json"
+
     all_runs = []
     for seed in seeds:
         print(f"\n{'='*70}\nSEED {seed}\n{'='*70}")
@@ -245,12 +269,18 @@ def multi_seed_evaluation(seeds, **run_kwargs):
             row += f"{s['mean']:>10.5f} +/-{s['std']:.5f}"
         print(row)
 
-    with open("results/multi_seed_summary.json", "w") as f:
+    summary["_meta"] = {"pair": pair, "slug": slug, "interval": interval,
+                        "seeds": list(seeds), "n_test": summary.get(
+                            "Hybrid_CNN_LSTM_Transformer", {}).get(
+                            "DirectionalAccuracy", {}).get("values") and None}
+    with open(ms_path, "w") as f:
         json.dump(summary, f, indent=2, default=float)
-    print("\nFull multi-seed summary written to results/multi_seed_summary.json")
+    if slug == "XAUUSD":                 # legacy name kept for gold back-compat
+        json.dump(summary, open("results/multi_seed_summary.json", "w"), indent=2, default=float)
+    print(f"\nFull multi-seed summary written to {ms_path}")
 
     # --- Roadmap extras: seed ensemble + event-window + calibrated abstention ---
-    roadmap = {"seeds": list(seeds)}
+    roadmap = {"seeds": list(seeds), "pair": pair, "slug": slug, "interval": interval}
 
     ens = build_seed_ensemble(seeds)
     if ens:
@@ -276,7 +306,7 @@ def multi_seed_evaluation(seeds, **run_kwargs):
         all_runs[0][hybrid_key].get("xgb_feature_importance") if hybrid_key in all_runs[0] else None
     )
 
-    tgc = build_trend_gated_committee(seeds)
+    tgc = build_trend_gated_committee(seeds, panel_path=ppanel)
     roadmap["trend_gated_committee"] = tgc
     if tgc:
         o, p = tgc["origin_rule"], tgc["per_horizon_committee"]
@@ -292,9 +322,11 @@ def multi_seed_evaluation(seeds, **run_kwargs):
               f"vs {consensus['unfiltered_diracc']:.3f} unfiltered; backtest "
               f"{consensus['backtest']['total_return_pct']:+.1f}% net (Sharpe {consensus['backtest']['annualised_sharpe']:.2f})")
 
-    with open("results/roadmap_summary.json", "w") as f:
+    with open(rm_path, "w") as f:
         json.dump(roadmap, f, indent=2, default=float)
-    print("Roadmap extras (ensemble / event-window / abstention) written to results/roadmap_summary.json")
+    if slug == "XAUUSD":                 # legacy name kept for gold back-compat
+        json.dump(roadmap, open("results/roadmap_summary.json", "w"), indent=2, default=float)
+    print(f"Roadmap extras (ensemble / event-window / TGC) written to {rm_path}")
     return summary
 
 
@@ -329,7 +361,8 @@ if __name__ == "__main__":
         import os
         import sys
 
-        panel_path = GOLD_PANEL
+        from data.pairs import panel_csv_path as _pcp
+        panel_path = _pcp(args.pair)
         if not os.path.exists(panel_path):
             sys.exit(f"[gate] No feature panel at {panel_path}. Run PIPELINE 1 first:\n"
                      f"       python build_dataset.py\n"

@@ -8942,6 +8942,12 @@
       "diracc": 0.6357206012378426,
       "pair_coverage": 0.23489096573208723,
       "n_pairs": 2262
+    },
+    "selected_subset": {
+      "up_fraction": 0.6206,
+      "best_naive_diracc": 0.6206,
+      "tgc_edge_vs_naive_pp": 0.1,
+      "note": "Daily TGC 0.622 = base rate of the trending subset the gate selects; +0.1pp over best-naive is within noise (no genuine selective skill). Reproduced 0.6220 @ 214 origins from parked daily predictions + git-recovered daily panel."
     }
   },
   "consensus": {
