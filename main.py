@@ -83,6 +83,18 @@ def run(
                            signal_strength=signal_strength, real_interval=interval)
     print(f"[data] panel source actually used: {panel.source}  (signal_strength={signal_strength if panel.source=='synthetic' else 'n/a'})")
     train_ds, val_ds, test_ds = time_split(panel)
+    # Stride the TRAIN/VAL origins at intraday resolution (test never strided).
+    # Consecutive H1 windows overlap 59/60 bars; the Colab A/B showed the
+    # stride-3 model OUTPERFORMED full-origin training (0.5255 vs 0.4928 raw)
+    # at a third of the cost -- redundancy, not data volume, binds here.
+    train_stride = int(os.environ.get("FOREX_TRAIN_STRIDE",
+                                      "3" if interval.endswith("h") else "1"))
+    if train_stride > 1:
+        n0, v0 = len(train_ds.indices), len(val_ds.indices)
+        train_ds.indices = train_ds.indices[::train_stride]
+        val_ds.indices = val_ds.indices[::train_stride]
+        print(f"[data] train stride {train_stride}: train {n0:,}->{len(train_ds.indices):,}, "
+              f"val {v0:,}->{len(val_ds.indices):,} (test untouched)")
     print(f"train={len(train_ds)}  val={len(val_ds)}  test={len(test_ds)}  features={panel.features.shape[1]}")
 
     adf = adf_test(panel.close)
