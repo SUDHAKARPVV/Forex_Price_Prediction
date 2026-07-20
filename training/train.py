@@ -7,6 +7,7 @@ at evaluation time in evaluate.py since they are not gradient-trained.
 from __future__ import annotations
 
 import copy
+import os
 import time
 
 import numpy as np
@@ -253,9 +254,16 @@ def train_model(
         if verbose:
             print(f"epoch {epoch:02d}/{epochs} | train_loss={train_loss:.6f} | val_loss={val_loss:.6f} | val_dir_acc={val_dir_acc:.4f} | {time.time()-t0:.1f}s")
 
-        improved = (val_dir_acc > best_dir_acc + 1e-6) or (
-            abs(val_dir_acc - best_dir_acc) <= 1e-6 and val_loss < best_val - 1e-7
-        )
+        # MAGNITUDE mode: targets are |returns|, so sign-accuracy saturates at
+        # ~1.0 by epoch 2 and selecting on it is a noise lottery. Select purely
+        # on val_loss (the actual magnitude objective) there; the original
+        # dir-acc-first rule is unchanged for direction training.
+        if os.environ.get("FOREX_TARGET", "direction") == "magnitude":
+            improved = val_loss < best_val - 1e-7
+        else:
+            improved = (val_dir_acc > best_dir_acc + 1e-6) or (
+                abs(val_dir_acc - best_dir_acc) <= 1e-6 and val_loss < best_val - 1e-7
+            )
         if improved:
             best_dir_acc = val_dir_acc
             best_val = min(best_val, val_loss)
@@ -265,7 +273,10 @@ def train_model(
             patience_counter += 1
             if patience_counter >= TRAIN_CFG.early_stopping_patience:
                 if verbose:
-                    print(f"Early stopping at epoch {epoch} (best val_dir_acc={best_dir_acc:.4f})")
+                    crit = ("val_loss=" + format(best_val, ".6f")
+                            if os.environ.get("FOREX_TARGET") == "magnitude"
+                            else "val_dir_acc=" + format(best_dir_acc, ".4f"))
+                    print(f"Early stopping at epoch {epoch} (best {crit})")
                 break
 
     model.load_state_dict(best_state)
