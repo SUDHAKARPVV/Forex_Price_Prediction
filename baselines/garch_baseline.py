@@ -34,6 +34,28 @@ def garch_multistep_forecast(train_close: np.ndarray, horizon: int) -> np.ndarra
     return np.cumsum(step_returns).astype(np.float32)
 
 
+def garch_sigma_forecast(train_close: np.ndarray, horizon: int,
+                         fit_window: int | None = None) -> np.ndarray:
+    """Conditional SIGMA of the k-step CUMULATIVE log-return -- the volatility
+    forecast GARCH actually exists for (the magnitude analog of the mean point
+    forecast). Returns sigma at each horizon 1..k, i.e. sqrt of the summed
+    per-step conditional variances (Gaussian cumulative-return approximation;
+    scale-consistent for rank scoring). Optional rolling fit_window caps the
+    history per fit for speed (mirrors the ARIMA baseline's fit_window)."""
+    from arch import arch_model
+
+    log_returns = np.diff(np.log(train_close)) * 100.0  # % scale for stability
+    if fit_window:
+        log_returns = log_returns[-fit_window:]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model = arch_model(log_returns, mean="AR", lags=1, vol="GARCH", p=1, q=1, rescale=False)
+        fit = model.fit(disp="off", show_warning=False)
+        fc = fit.forecast(horizon=horizon, reindex=False)
+    var_steps = np.asarray(fc.variance.values[-1], dtype=np.float64) / (100.0 ** 2)
+    return np.sqrt(np.cumsum(var_steps)).astype(np.float32)
+
+
 def rolling_garch_evaluation(close: np.ndarray, origins: list, horizon: int, min_history: int = 250):
     """Walk-forward GARCH at each forecast origin using only data available
     up to that point, matching rolling_arima_evaluation's contract."""
