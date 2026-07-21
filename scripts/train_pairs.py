@@ -150,6 +150,50 @@ def _truncate_panel(panel, bars: int):
     )
 
 
+def garch_sigma_test_cached(panel, test_indices, horizon, ckpt_base,
+                            stride=None, fit_window=5000):
+    """k-step GARCH conditional sigma at every TEST origin, for the magnitude
+    experiment's third baseline. GARCH-sigma is SEED-INDEPENDENT (a classical
+    model, no torch RNG), so it is computed ONCE and cached (keyed by close md5)
+    and reused across all seeds. Computed on a stride and forward-filled: GARCH
+    conditional sigma is highly autocorrelated hour-to-hour, so sigma[t] ~=
+    sigma[t-4] -- the same striding precedent as the GARCH mean expert. Returns
+    an array aligned 1:1 with test_indices."""
+    import hashlib
+
+    import pandas as pd
+
+    from baselines.garch_baseline import garch_sigma_forecast
+
+    stride = stride or int(os.environ.get("FOREX_GARCH_SIGMA_STRIDE", "5"))
+    close = np.asarray(panel.close, dtype=np.float64)
+    md5 = hashlib.md5(close.tobytes()).hexdigest()
+    ti = np.asarray(test_indices, dtype=np.int64)
+    path = os.path.join(ckpt_base, "garch_sigma_test.npz")
+    if os.path.exists(path):
+        try:
+            z = np.load(path, allow_pickle=True)
+            if (str(z["close_md5"]) == md5 and z["origins"].shape == ti.shape
+                    and np.array_equal(z["origins"], ti)):
+                print(f"[train_pairs] GARCH-sigma test cache hit ({path})")
+                return z["sigma"]
+        except Exception:
+            pass
+    print(f"[train_pairs] computing GARCH-sigma at ~{len(range(0, len(ti), stride))} "
+          f"strided test origins (stride {stride}, fit_window {fit_window}) -- cached for reuse")
+    sig = np.full(len(ti), np.nan, dtype=np.float64)
+    for j in range(0, len(ti), stride):
+        t = int(ti[j])
+        try:
+            sig[j] = float(garch_sigma_forecast(close[: t + 1], horizon, fit_window=fit_window)[-1])
+        except Exception:
+            continue
+    sig = pd.Series(sig).ffill().bfill().to_numpy()
+    os.makedirs(ckpt_base, exist_ok=True)
+    np.savez(path, origins=ti, sigma=sig, close_md5=md5)
+    return sig
+
+
 def _resolve_device(device: str) -> str:
     if device == "auto":
         return "cuda" if torch.cuda.is_available() else "cpu"
@@ -246,6 +290,12 @@ def run_pair(pair: str, interval: str = "4h", bars: int = None,
         names = list(panel.feature_names)
         origins = np.array(te.indices)[: len(y_true)]
         atrp = panel.features[:, names.index("atr_pct")][origins]
+        # GARCH-sigma: the classical VOLATILITY model on the magnitude target --
+        # the meaningful "Hybrid > GARCH" bar (GARCH beats direction via drift,
+        # but the pre-check showed the model beats GARCH-sigma on magnitude).
+        # Skip on smoke runs (needs the full frozen test origins to be worth it).
+        gsig = None if smoke else garch_sigma_test_cached(
+            panel, origins, DATA_CFG.horizon, checkpoint_dir(pair))
         act = y_true[:, -1]                     # actual |10-bar move|
         prd = y_pred[:, -1]
         # adaptive rolling-median split; window shrinks for smoke-sized samples
@@ -264,13 +314,25 @@ def run_pair(pair: str, interval: str = "4h", bars: int = None,
             "atr_pct_large_move_acc": _acc(atrp),
             "base_rate": float(y_hi[ok].mean()),
         }
+        if gsig is not None and np.isfinite(gsig[ok]).all():
+            mag_metrics["garch_sigma_spearman"] = float(spearmanr(gsig[ok], act[ok]).statistic)
+            mag_metrics["garch_sigma_large_move_acc"] = _acc(gsig)
+        _gs_sp = mag_metrics.get("garch_sigma_spearman")
+        _gs_ac = mag_metrics.get("garch_sigma_large_move_acc")
+        _beats_atr = (mag_metrics["model_spearman"] > mag_metrics["atr_pct_spearman"]
+                      and mag_metrics["model_large_move_acc"] > mag_metrics["atr_pct_large_move_acc"])
+        _beats_garch = (_gs_sp is not None and mag_metrics["model_spearman"] > _gs_sp
+                        and mag_metrics["model_large_move_acc"] > _gs_ac)
         print(f"[train_pairs] {cfg.slug} MAGNITUDE: model spearman "
-              f"{mag_metrics['model_spearman']:+.3f} vs atr_pct "
-              f"{mag_metrics['atr_pct_spearman']:+.3f} | large-move acc "
-              f"{mag_metrics['model_large_move_acc']:.3f} vs "
-              f"{mag_metrics['atr_pct_large_move_acc']:.3f} "
-              f"(base {mag_metrics['base_rate']:.3f}) -> "
-              f"{'MODEL BEATS atr_pct' if mag_metrics['model_large_move_acc'] > mag_metrics['atr_pct_large_move_acc'] and mag_metrics['model_spearman'] > mag_metrics['atr_pct_spearman'] else 'atr_pct still ahead'}")
+              f"{mag_metrics['model_spearman']:+.3f} | atr_pct "
+              f"{mag_metrics['atr_pct_spearman']:+.3f}"
+              + (f" | GARCH-sigma {_gs_sp:+.3f}" if _gs_sp is not None else "")
+              + f" || large-move acc {mag_metrics['model_large_move_acc']:.3f} vs "
+              f"{mag_metrics['atr_pct_large_move_acc']:.3f}"
+              + (f" vs {_gs_ac:.3f}" if _gs_ac is not None else "")
+              + f" (base {mag_metrics['base_rate']:.3f}) -> "
+              + f"{'BEATS atr_pct' if _beats_atr else 'atr_pct ahead'}"
+              + (f", {'BEATS GARCH' if _beats_garch else 'GARCH ahead'}" if _gs_sp is not None else ""))
         cal_da, taus, base_rate = float("nan"), np.zeros(DATA_CFG.horizon), float("nan")
     else:
         # Val-tuned per-horizon sign thresholds (reported ALONGSIDE raw, never

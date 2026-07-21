@@ -1213,36 +1213,51 @@ elif page.startswith("📈"):
         mag = load_json(f"results/multi_seed_magnitude_{PCFG.slug}.json")
         if mag and mag.get("aggregate"):
             st.divider()
-            st.subheader("📐 Move-magnitude forecasting — model vs ATR% (3-seed)")
             agg, per = mag["aggregate"], mag.get("per_seed", [])
+            has_g = "garch_sigma_spearman" in agg
+            st.subheader("📐 Move-magnitude forecasting — model vs ATR%"
+                         + (" vs GARCH-σ" if has_g else "") + " (3-seed)")
             seeds_m = [r.get("seed") for r in per]
             n_beat = mag.get("n_seeds_beating_atr_both", 0)
             n_tot = mag.get("n_seeds_scored", len(per))
             base = agg.get("base_rate", {}).get("mean", float("nan"))
             st.caption(f"Seeds {seeds_m} · {mag.get('interval','1h')} · target = |cumulative "
-                       f"10-bar return| (net displacement) · mean ± std across seeds. "
-                       f"The bar to beat is **atr_pct**, the best simple volatility indicator.")
+                       f"10-bar return| (net displacement) · mean ± std across seeds. Baselines: "
+                       f"**atr_pct** (simple indicator)"
+                       + (" and **GARCH-σ** (classical volatility model — the meaningful bar, since "
+                          "GARCH beats the model on *direction*)." if has_g else "."))
             m_sp, a_sp = agg["model_spearman"], agg["atr_pct_spearman"]
             m_ac, a_ac = agg["model_large_move_acc"], agg["atr_pct_large_move_acc"]
             sp_edge, ac_edge = agg["model_spearman_edge"], agg["model_acc_edge"]
+            g_sp = agg.get("garch_sigma_spearman"); g_ac = agg.get("garch_sigma_large_move_acc")
             mc = st.columns(4)
             metric_card(mc[0], "Model rank skill (spearman)", f"{m_sp['mean']:.3f}", TEAL,
-                        f"atr_pct {a_sp['mean']:.3f} · edge {sp_edge['mean']:+.3f}")
+                        f"atr {a_sp['mean']:.3f}" + (f" · GARCH {g_sp['mean']:.3f}" if has_g else ""))
             metric_card(mc[1], "Model large-move acc.", f"{m_ac['mean']:.3f}", GREEN,
-                        f"atr_pct {a_ac['mean']:.3f} · base {base:.3f}")
-            metric_card(mc[2], "Edge vs ATR% (acc)", f"{ac_edge['mean']*100:+.1f}pp",
-                        GREEN if ac_edge['mean'] > 0 else SLATE,
-                        f"±{ac_edge['std']*100:.2f}pp across seeds")
-            metric_card(mc[3], "Seeds beating ATR% (both)", f"{n_beat}/{n_tot}",
+                        f"atr {a_ac['mean']:.3f}" + (f" · GARCH {g_ac['mean']:.3f}" if has_g else "")
+                        + f" · base {base:.3f}")
+            metric_card(mc[2], "Seeds beating ATR% (both)", f"{n_beat}/{n_tot}",
                         TEAL if n_beat == n_tot else SLATE, "spearman AND accuracy")
+            if has_g:
+                n_beat_g = mag.get("n_seeds_beating_garch_both", 0)
+                metric_card(mc[3], "Seeds beating GARCH-σ (both)", f"{n_beat_g}/{n_tot}",
+                            GREEN if n_beat_g == n_tot else SLATE, "the Hybrid > GARCH bar")
+            else:
+                metric_card(mc[3], "Edge vs ATR% (acc)", f"{ac_edge['mean']*100:+.1f}pp",
+                            GREEN if ac_edge['mean'] > 0 else SLATE,
+                            f"±{ac_edge['std']*100:.2f}pp across seeds")
             # grouped model-vs-baseline bars on both metrics
+            x = ["rank skill (spearman)", "large-move acc."]
             mfig = go.Figure()
-            mfig.add_trace(go.Bar(name="Hybrid model", x=["rank skill (spearman)", "large-move acc."],
-                                  y=[m_sp["mean"], m_ac["mean"]],
+            mfig.add_trace(go.Bar(name="Hybrid model", x=x, y=[m_sp["mean"], m_ac["mean"]],
                                   error_y=dict(type="data", array=[m_sp["std"], m_ac["std"]]),
                                   marker_color=TEAL))
-            mfig.add_trace(go.Bar(name="ATR% baseline", x=["rank skill (spearman)", "large-move acc."],
-                                  y=[a_sp["mean"], a_ac["mean"]],
+            if has_g:
+                mfig.add_trace(go.Bar(name="GARCH-σ (classical vol model)", x=x,
+                                      y=[g_sp["mean"], g_ac["mean"]],
+                                      error_y=dict(type="data", array=[g_sp["std"], g_ac["std"]]),
+                                      marker_color=GREEN))
+            mfig.add_trace(go.Bar(name="ATR% (simple indicator)", x=x, y=[a_sp["mean"], a_ac["mean"]],
                                   error_y=dict(type="data", array=[a_sp["std"], a_ac["std"]]),
                                   marker_color=NAVY))
             mfig.update_layout(barmode="group", height=320, template="plotly_white",
@@ -1253,23 +1268,39 @@ elif page.startswith("📈"):
                 st.success(
                     f"**Robust positive result.** Across all {n_tot} seeds the 37-feature Hybrid "
                     f"forecasts move-magnitude **better than ATR%** on both rank skill "
-                    f"(+{sp_edge['mean']:.3f}) and large-move accuracy ({ac_edge['mean']*100:+.1f}pp), "
-                    f"with a seed-to-seed spread near zero. Direction is unpredictable at H1, but its "
-                    f"**magnitude is** — and the model adds genuine value over the simple indicator. "
-                    f"This is the honest headline win.", icon="📐")
+                    f"(+{sp_edge['mean']:.3f}) and large-move accuracy ({ac_edge['mean']*100:+.1f}pp). "
+                    f"Direction is unpredictable at H1, but its **magnitude is** — and the model adds "
+                    f"genuine value over the simple indicator.", icon="📐")
             elif verdict.startswith("FRAGILE"):
                 st.warning(
                     f"**Fragile.** Only {n_beat}/{n_tot} seeds beat ATR% on both metrics — the single-seed "
-                    f"edge does not survive re-seeding, so it is within RNG noise. Honest reading: gold "
-                    f"volatility is forecastable, but a simple ATR% suffices; the deep model adds no "
-                    f"reliable magnitude skill.", icon="⚖️")
+                    f"edge does not survive re-seeding. Honest reading: gold volatility is forecastable, "
+                    f"but a simple ATR% suffices; the deep model adds no reliable magnitude skill.", icon="⚖️")
             else:
-                st.info(
-                    f"**Marginal.** The mean edge is positive but within the seed spread "
-                    f"(spearman {sp_edge['mean']:+.3f}±{sp_edge['std']:.3f}, "
-                    f"acc {ac_edge['mean']*100:+.1f}±{ac_edge['std']*100:.2f}pp) — not a decisive win.",
-                    icon="⚖️")
+                st.info(f"**Marginal.** Mean edge positive but within the seed spread "
+                        f"(spearman {sp_edge['mean']:+.3f}±{sp_edge['std']:.3f}, "
+                        f"acc {ac_edge['mean']*100:+.1f}±{ac_edge['std']*100:.2f}pp).", icon="⚖️")
+            # the headline "Hybrid > GARCH" verdict
+            gv = mag.get("garch_verdict", "")
+            if gv.startswith("ROBUST"):
+                gse = agg["model_vs_garch_spearman_edge"]; gae = agg["model_vs_garch_acc_edge"]
+                st.success(
+                    f"**Hybrid > GARCH on the predictable target.** GARCH-σ is the *stronger* baseline "
+                    f"(it beats ATR%), yet across all {n_tot} seeds the Hybrid beats **GARCH-σ** too — "
+                    f"rank +{gse['mean']:.3f}, accuracy {gae['mean']*100:+.1f}pp. GARCH wins *direction* "
+                    f"(via drift); the Hybrid wins *magnitude* (where real signal lives). Each model wins "
+                    f"where its structure fits — and ours wins the target that carries signal. "
+                    f"**This is the honest headline result.**", icon="🏆")
+            elif gv.startswith("FRAGILE"):
+                st.warning(f"**Does not clear GARCH-σ on every seed** "
+                           f"({mag.get('n_seeds_beating_garch_both','?')}/{n_tot}). The model beats the "
+                           f"simple ATR% indicator but not the classical GARCH volatility model reliably — "
+                           f"honest scope: beats the simple baseline, ties/loses to the econometric one.",
+                           icon="⚖️")
+            elif gv.startswith("MARGINAL"):
+                st.info("**Beats GARCH-σ on average but within seed noise** — suggestive, not decisive.",
+                        icon="⚖️")
             st.caption("Scope: the target is |net displacement| over 10 bars, not RMS realised "
-                       "volatility (where ATR% alone scores ~0.60). This panel measures whether the "
-                       "learned model improves on the classical indicator for the net-move target.")
+                       "volatility. GARCH-σ = √(Σ per-step GARCH(1,1) variances), computed once and "
+                       "reused across seeds (it is seed-independent).")
 

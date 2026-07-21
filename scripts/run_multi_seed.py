@@ -259,6 +259,13 @@ def multi_seed_magnitude(seeds, pair="XAU/USD", interval="1h", source="panel",
         mm["model_spearman_edge"] = mm["model_spearman"] - mm["atr_pct_spearman"]
         mm["model_acc_edge"] = mm["model_large_move_acc"] - mm["atr_pct_large_move_acc"]
         mm["beats_atr_both"] = bool(mm["model_spearman_edge"] > 0 and mm["model_acc_edge"] > 0)
+        # GARCH-sigma baseline (the classical volatility model; seed-independent,
+        # so identical across seeds -- present when not a smoke run)
+        if "garch_sigma_spearman" in mm:
+            mm["model_vs_garch_spearman_edge"] = mm["model_spearman"] - mm["garch_sigma_spearman"]
+            mm["model_vs_garch_acc_edge"] = mm["model_large_move_acc"] - mm["garch_sigma_large_move_acc"]
+            mm["beats_garch_both"] = bool(mm["model_vs_garch_spearman_edge"] > 0
+                                          and mm["model_vs_garch_acc_edge"] > 0)
         rows.append(mm)
 
     if not rows:
@@ -272,6 +279,10 @@ def multi_seed_magnitude(seeds, pair="XAU/USD", interval="1h", source="panel",
     fields = ["model_spearman", "atr_pct_spearman", "model_spearman_edge",
               "model_large_move_acc", "atr_pct_large_move_acc", "model_acc_edge",
               "base_rate"]
+    has_garch = all("garch_sigma_spearman" in r for r in rows)
+    if has_garch:
+        fields += ["garch_sigma_spearman", "garch_sigma_large_move_acc",
+                   "model_vs_garch_spearman_edge", "model_vs_garch_acc_edge"]
     summary = {"pair": pair, "slug": slug, "interval": interval,
                "seeds": list(seeds), "n_seeds_scored": len(rows),
                "per_seed": rows, "aggregate": {k: agg(k) for k in fields}}
@@ -287,18 +298,35 @@ def multi_seed_magnitude(seeds, pair="XAU/USD", interval="1h", source="panel",
                           "FRAGILE: edge does not survive every seed (likely single-seed noise)"
                           if n_beat < len(rows) else
                           "MARGINAL: mean edge positive but within seed noise (mean-1sd <= 0)")
+    if has_garch:
+        n_beat_g = sum(r.get("beats_garch_both", False) for r in rows)
+        summary["n_seeds_beating_garch_both"] = n_beat_g
+        gse = summary["aggregate"]["model_vs_garch_spearman_edge"]
+        gae = summary["aggregate"]["model_vs_garch_acc_edge"]
+        robust_g = (gse["mean"] - gse["std"] > 0) and (gae["mean"] - gae["std"] > 0) and n_beat_g == len(rows)
+        summary["garch_verdict"] = (
+            "ROBUST: model beats GARCH-sigma across all seeds" if robust_g else
+            "FRAGILE: does not beat GARCH-sigma on every seed" if n_beat_g < len(rows) else
+            "MARGINAL: beats GARCH-sigma on average but within seed noise")
 
     print(f"\n{'='*70}\nMAGNITUDE MULTI-SEED SUMMARY ({len(rows)} seeds: "
           f"{[r['seed'] for r in rows]})\n{'='*70}")
-    print(f"{'metric':26s}{'model':>12s}{'atr_pct':>12s}{'edge (mean+/-sd)':>22s}")
-    for m_key, a_key, e_key, lbl in (
-        ("model_spearman", "atr_pct_spearman", "model_spearman_edge", "spearman"),
-        ("model_large_move_acc", "atr_pct_large_move_acc", "model_acc_edge", "large-move acc")):
-        M, A, E = summary["aggregate"][m_key], summary["aggregate"][a_key], summary["aggregate"][e_key]
-        print(f"{lbl:26s}{M['mean']:>12.3f}{A['mean']:>12.3f}"
-              f"{E['mean']:>+13.3f} +/-{E['std']:.3f}")
-    print(f"\nseeds beating atr_pct on BOTH metrics: {n_beat}/{len(rows)}")
-    print(f"VERDICT: {summary['verdict']}")
+    _hdr = f"{'metric':26s}{'model':>11s}{'atr_pct':>11s}"
+    if has_garch:
+        _hdr += f"{'GARCH-sig':>11s}"
+    print(_hdr)
+    for m_key, a_key, g_key, lbl in (
+        ("model_spearman", "atr_pct_spearman", "garch_sigma_spearman", "spearman"),
+        ("model_large_move_acc", "atr_pct_large_move_acc", "garch_sigma_large_move_acc", "large-move acc")):
+        M, A = summary["aggregate"][m_key], summary["aggregate"][a_key]
+        row = f"{lbl:26s}{M['mean']:>11.3f}{A['mean']:>11.3f}"
+        if has_garch:
+            row += f"{summary['aggregate'][g_key]['mean']:>11.3f}"
+        print(row)
+    print(f"\nseeds beating atr_pct on BOTH metrics: {n_beat}/{len(rows)}  -> {summary['verdict']}")
+    if has_garch:
+        print(f"seeds beating GARCH-sigma on BOTH:     {summary['n_seeds_beating_garch_both']}/{len(rows)}"
+              f"  -> {summary['garch_verdict']}")
 
     out = f"results/multi_seed_magnitude_{slug}.json"
     json.dump(summary, open(out, "w"), indent=2, default=float)
