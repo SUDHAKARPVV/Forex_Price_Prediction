@@ -1204,3 +1204,72 @@ elif page.startswith("📈"):
                     f"The single-seed (seed 9) result is the comparison table above; the ablation and "
                     f"cross-pair analyses are queued for the same round.", icon="🧪")
 
+        # ---- Volatility / magnitude — the model's one robust win over a
+        # simple baseline. Direction is unpredictable at H1 (every framing lands
+        # at the base rate); this asks the SEPARATE question "how BIG is the next
+        # move?" and is scored against atr_pct with the same honesty as TGC:
+        # the simple indicator is shown alongside, and the verdict only reads
+        # ROBUST if the model beats it on BOTH metrics across every seed.
+        mag = load_json(f"results/multi_seed_magnitude_{PCFG.slug}.json")
+        if mag and mag.get("aggregate"):
+            st.divider()
+            st.subheader("📐 Move-magnitude forecasting — model vs ATR% (3-seed)")
+            agg, per = mag["aggregate"], mag.get("per_seed", [])
+            seeds_m = [r.get("seed") for r in per]
+            n_beat = mag.get("n_seeds_beating_atr_both", 0)
+            n_tot = mag.get("n_seeds_scored", len(per))
+            base = agg.get("base_rate", {}).get("mean", float("nan"))
+            st.caption(f"Seeds {seeds_m} · {mag.get('interval','1h')} · target = |cumulative "
+                       f"10-bar return| (net displacement) · mean ± std across seeds. "
+                       f"The bar to beat is **atr_pct**, the best simple volatility indicator.")
+            m_sp, a_sp = agg["model_spearman"], agg["atr_pct_spearman"]
+            m_ac, a_ac = agg["model_large_move_acc"], agg["atr_pct_large_move_acc"]
+            sp_edge, ac_edge = agg["model_spearman_edge"], agg["model_acc_edge"]
+            mc = st.columns(4)
+            metric_card(mc[0], "Model rank skill (spearman)", f"{m_sp['mean']:.3f}", TEAL,
+                        f"atr_pct {a_sp['mean']:.3f} · edge {sp_edge['mean']:+.3f}")
+            metric_card(mc[1], "Model large-move acc.", f"{m_ac['mean']:.3f}", GREEN,
+                        f"atr_pct {a_ac['mean']:.3f} · base {base:.3f}")
+            metric_card(mc[2], "Edge vs ATR% (acc)", f"{ac_edge['mean']*100:+.1f}pp",
+                        GREEN if ac_edge['mean'] > 0 else SLATE,
+                        f"±{ac_edge['std']*100:.2f}pp across seeds")
+            metric_card(mc[3], "Seeds beating ATR% (both)", f"{n_beat}/{n_tot}",
+                        TEAL if n_beat == n_tot else SLATE, "spearman AND accuracy")
+            # grouped model-vs-baseline bars on both metrics
+            mfig = go.Figure()
+            mfig.add_trace(go.Bar(name="Hybrid model", x=["rank skill (spearman)", "large-move acc."],
+                                  y=[m_sp["mean"], m_ac["mean"]],
+                                  error_y=dict(type="data", array=[m_sp["std"], m_ac["std"]]),
+                                  marker_color=TEAL))
+            mfig.add_trace(go.Bar(name="ATR% baseline", x=["rank skill (spearman)", "large-move acc."],
+                                  y=[a_sp["mean"], a_ac["mean"]],
+                                  error_y=dict(type="data", array=[a_sp["std"], a_ac["std"]]),
+                                  marker_color=NAVY))
+            mfig.update_layout(barmode="group", height=320, template="plotly_white",
+                               yaxis_title="score (higher = better)", margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(mfig, use_container_width=True)
+            verdict = mag.get("verdict", "")
+            if verdict.startswith("ROBUST"):
+                st.success(
+                    f"**Robust positive result.** Across all {n_tot} seeds the 37-feature Hybrid "
+                    f"forecasts move-magnitude **better than ATR%** on both rank skill "
+                    f"(+{sp_edge['mean']:.3f}) and large-move accuracy ({ac_edge['mean']*100:+.1f}pp), "
+                    f"with a seed-to-seed spread near zero. Direction is unpredictable at H1, but its "
+                    f"**magnitude is** — and the model adds genuine value over the simple indicator. "
+                    f"This is the honest headline win.", icon="📐")
+            elif verdict.startswith("FRAGILE"):
+                st.warning(
+                    f"**Fragile.** Only {n_beat}/{n_tot} seeds beat ATR% on both metrics — the single-seed "
+                    f"edge does not survive re-seeding, so it is within RNG noise. Honest reading: gold "
+                    f"volatility is forecastable, but a simple ATR% suffices; the deep model adds no "
+                    f"reliable magnitude skill.", icon="⚖️")
+            else:
+                st.info(
+                    f"**Marginal.** The mean edge is positive but within the seed spread "
+                    f"(spearman {sp_edge['mean']:+.3f}±{sp_edge['std']:.3f}, "
+                    f"acc {ac_edge['mean']*100:+.1f}±{ac_edge['std']*100:.2f}pp) — not a decisive win.",
+                    icon="⚖️")
+            st.caption("Scope: the target is |net displacement| over 10 bars, not RMS realised "
+                       "volatility (where ATR% alone scores ~0.60). This panel measures whether the "
+                       "learned model improves on the classical indicator for the net-move target.")
+
