@@ -1285,12 +1285,13 @@ elif page.startswith("📈"):
             if gv.startswith("ROBUST"):
                 gse = agg["model_vs_garch_spearman_edge"]; gae = agg["model_vs_garch_acc_edge"]
                 st.success(
-                    f"**Hybrid > GARCH on the predictable target.** GARCH-σ is the *stronger* baseline "
-                    f"(it beats ATR%), yet across all {n_tot} seeds the Hybrid beats **GARCH-σ** too — "
-                    f"rank +{gse['mean']:.3f}, accuracy {gae['mean']*100:+.1f}pp. GARCH wins *direction* "
-                    f"(via drift); the Hybrid wins *magnitude* (where real signal lives). Each model wins "
-                    f"where its structure fits — and ours wins the target that carries signal. "
-                    f"**This is the honest headline result.**", icon="🏆")
+                    f"**Hybrid > both classical baselines on the predictable target.** Across all "
+                    f"{n_tot} seeds the Hybrid beats **GARCH-σ** — the econometric volatility model — on "
+                    f"both metrics (rank +{gse['mean']:.3f}, accuracy {gae['mean']*100:+.1f}pp), as well "
+                    f"as the simple ATR% indicator (the two baselines are comparable here). GARCH wins "
+                    f"*direction* (via drift); the Hybrid wins *magnitude* (where real signal lives). "
+                    f"Each model wins where its structure fits — and ours wins the target that carries "
+                    f"signal. **This is the honest headline result.**", icon="🏆")
             elif gv.startswith("FRAGILE"):
                 st.warning(f"**Does not clear GARCH-σ on every seed** "
                            f"({mag.get('n_seeds_beating_garch_both','?')}/{n_tot}). The model beats the "
