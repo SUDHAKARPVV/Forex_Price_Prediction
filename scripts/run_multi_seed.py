@@ -227,6 +227,85 @@ def build_trend_gated_committee(seeds, model="Hybrid_CNN_LSTM_Transformer", pane
     }
 
 
+def multi_seed_magnitude(seeds, pair="XAU/USD", interval="1h", source="panel",
+                         epochs=None, train_stride=3, refit_every=100,
+                         device="auto", batch_size=None, bars=None):
+    """Multi-seed stability for the MAGNITUDE experiment.
+
+    The single-seed run showed the 37-feature model edging atr_pct on |cumulative
+    return| (+0.034 rank, +1.7pp large-move acc) -- but a single seed can't tell a
+    real edge from RNG. This retrains per seed (reusing train_pairs.run_pair, which
+    trains, scores vs atr_pct, and persists per-seed magnitude artifacts) and
+    reports the model-minus-atr_pct edge as mean +/- std across seeds, plus how
+    many seeds individually beat atr_pct on BOTH metrics. That is the honest bar:
+    the edge is only defensible if it survives every seed, not just the lucky one.
+    """
+    from data.pairs import get_pair
+    from scripts.train_pairs import run_pair
+
+    slug = get_pair(pair).slug
+    rows = []
+    for seed in seeds:
+        print(f"\n{'='*70}\nMAGNITUDE SEED {seed}\n{'='*70}")
+        meta = run_pair(pair, interval=interval, source=source, epochs=epochs,
+                        train_stride=train_stride, refit_every=refit_every,
+                        device=device, batch_size=batch_size, bars=bars,
+                        target="magnitude", seed=seed)
+        mm = meta.get("magnitude_vs_atr")
+        if not mm:
+            print(f"[magnitude] seed {seed}: no scoring returned -- skipping")
+            continue
+        mm["seed"] = seed
+        mm["model_spearman_edge"] = mm["model_spearman"] - mm["atr_pct_spearman"]
+        mm["model_acc_edge"] = mm["model_large_move_acc"] - mm["atr_pct_large_move_acc"]
+        mm["beats_atr_both"] = bool(mm["model_spearman_edge"] > 0 and mm["model_acc_edge"] > 0)
+        rows.append(mm)
+
+    if not rows:
+        print("[magnitude] no seeds produced scoring -- aborting summary")
+        return None
+
+    def agg(key):
+        v = np.array([r[key] for r in rows], dtype=float)
+        return {"mean": float(v.mean()), "std": float(v.std()), "values": v.tolist()}
+
+    fields = ["model_spearman", "atr_pct_spearman", "model_spearman_edge",
+              "model_large_move_acc", "atr_pct_large_move_acc", "model_acc_edge",
+              "base_rate"]
+    summary = {"pair": pair, "slug": slug, "interval": interval,
+               "seeds": list(seeds), "n_seeds_scored": len(rows),
+               "per_seed": rows, "aggregate": {k: agg(k) for k in fields}}
+    n_beat = sum(r["beats_atr_both"] for r in rows)
+    summary["n_seeds_beating_atr_both"] = n_beat
+    # Honest verdict: the edge is only defensible if BOTH aggregate edges are
+    # positive AND every scored seed individually beats atr_pct on both metrics.
+    se = summary["aggregate"]["model_spearman_edge"]
+    ae = summary["aggregate"]["model_acc_edge"]
+    robust = (se["mean"] - se["std"] > 0) and (ae["mean"] - ae["std"] > 0) and n_beat == len(rows)
+    summary["verdict"] = ("ROBUST: model beats atr_pct across all seeds"
+                          if robust else
+                          "FRAGILE: edge does not survive every seed (likely single-seed noise)"
+                          if n_beat < len(rows) else
+                          "MARGINAL: mean edge positive but within seed noise (mean-1sd <= 0)")
+
+    print(f"\n{'='*70}\nMAGNITUDE MULTI-SEED SUMMARY ({len(rows)} seeds: "
+          f"{[r['seed'] for r in rows]})\n{'='*70}")
+    print(f"{'metric':26s}{'model':>12s}{'atr_pct':>12s}{'edge (mean+/-sd)':>22s}")
+    for m_key, a_key, e_key, lbl in (
+        ("model_spearman", "atr_pct_spearman", "model_spearman_edge", "spearman"),
+        ("model_large_move_acc", "atr_pct_large_move_acc", "model_acc_edge", "large-move acc")):
+        M, A, E = summary["aggregate"][m_key], summary["aggregate"][a_key], summary["aggregate"][e_key]
+        print(f"{lbl:26s}{M['mean']:>12.3f}{A['mean']:>12.3f}"
+              f"{E['mean']:>+13.3f} +/-{E['std']:.3f}")
+    print(f"\nseeds beating atr_pct on BOTH metrics: {n_beat}/{len(rows)}")
+    print(f"VERDICT: {summary['verdict']}")
+
+    out = f"results/multi_seed_magnitude_{slug}.json"
+    json.dump(summary, open(out, "w"), indent=2, default=float)
+    print(f"\nWritten to {out}")
+    return summary
+
+
 def multi_seed_evaluation(seeds, **run_kwargs):
     from data.pairs import get_pair, panel_csv_path
     pair = run_kwargs.get("pair", "XAU/USD")
@@ -346,6 +425,12 @@ if __name__ == "__main__":
                         help="'1h' hourly (default/canonical: the project is fixed on XAUUSD H1). "
                              "'1d'/'4h' retained for legacy runs only.")
     parser.add_argument("--signal_strength", type=float, default=None)
+    parser.add_argument("--target", default="direction", choices=["direction", "magnitude"],
+                        help="'magnitude' runs the volatility experiment's multi-seed "
+                             "stability check (model vs atr_pct on |cumulative return|), "
+                             "reusing train_pairs.run_pair per seed.")
+    parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"],
+                        help="magnitude target only: 'auto' uses CUDA when available.")
     args = parser.parse_args()
 
     # PIPELINE 2 gate: the model pipeline only runs when real data is ready.
@@ -377,16 +462,28 @@ if __name__ == "__main__":
             pass
 
     try:
-        multi_seed_evaluation(
-            args.seeds,
-            pair=args.pair,
-            n_days=args.n_days,
-            epochs=args.epochs,
-            quick=args.quick,
-            source=args.source,
-            interval=args.interval,
-            signal_strength=args.signal_strength,
-        )
+        if args.target == "magnitude":
+            # epochs=None -> use the configured two-stage budget (matches the
+            # single full run), not the directional --epochs default of 30.
+            multi_seed_magnitude(
+                args.seeds,
+                pair=args.pair,
+                interval=args.interval,
+                source=args.source,
+                epochs=(args.epochs if args.epochs != 30 else None),
+                device=args.device,
+            )
+        else:
+            multi_seed_evaluation(
+                args.seeds,
+                pair=args.pair,
+                n_days=args.n_days,
+                epochs=args.epochs,
+                quick=args.quick,
+                source=args.source,
+                interval=args.interval,
+                signal_strength=args.signal_strength,
+            )
     except Exception:
         import traceback
         tb = traceback.format_exc()

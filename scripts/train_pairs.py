@@ -160,7 +160,7 @@ def run_pair(pair: str, interval: str = "4h", bars: int = None,
              epochs: int = None, source: str = "panel",
              train_stride: int = 1, refit_every: int = 14,
              device: str = "auto", batch_size: int = None,
-             target: str = "direction") -> dict:
+             target: str = "direction", seed: int = SEED) -> dict:
     magnitude = target == "magnitude"
     if magnitude:
         # Must be set BEFORE any FXWindowDataset is constructed (the flag is
@@ -175,7 +175,7 @@ def run_pair(pair: str, interval: str = "4h", bars: int = None,
           f"{f'  [SMOKE: {bars} bars, {epochs} epochs]' if smoke else ''} =====")
     # source="panel" loads the FROZEN panel (fast -- the smoke path); "real"
     # rebuilds from the pair's own feeds. interval="1h" is the H1 pipeline.
-    panel = build_fx_panel(pair=pair, n_days=200000, seed=SEED, source=source,
+    panel = build_fx_panel(pair=pair, n_days=200000, seed=seed, source=source,
                            real_interval=interval)
     if smoke:
         panel = _truncate_panel(panel, bars)
@@ -227,7 +227,7 @@ def run_pair(pair: str, interval: str = "4h", bars: int = None,
     print(f"[train_pairs] device={dev}"
           + (f" ({torch.cuda.get_device_name(0)})" if dev == "cuda" else "")
           + f" | batch_size={bs}")
-    torch.manual_seed(SEED)
+    torch.manual_seed(seed)
     hybrid = HybridCNNLSTMTransformer()
     tr_text = _text_dense_subset(tr_x, panel, TRAIN_CFG.two_stage_text_from)
     va_text = _text_dense_subset(va_x, panel, TRAIN_CFG.two_stage_text_from)
@@ -235,7 +235,7 @@ def run_pair(pair: str, interval: str = "4h", bars: int = None,
                                 epochs=(epochs or TRAIN_CFG.epochs), lr=TRAIN_CFG.lr * 0.5,
                                 device=dev, batch_size=bs,
                                 classification_weight=TRAIN_CFG.classification_loss_weight,
-                                seed=SEED)
+                                seed=seed)
     rep, y_true, y_pred, band = evaluate_deep_model(hybrid, te_x, f"Hybrid_{cfg.slug}", device=dev)
 
     mag_metrics = None
@@ -306,8 +306,9 @@ def run_pair(pair: str, interval: str = "4h", bars: int = None,
     ckpt = checkpoint_dir(pair)
     if magnitude:
         # keep the magnitude experiment fully separate from the direction
-        # checkpoint the dashboard serves
-        ckpt = os.path.join(ckpt, "magnitude")
+        # checkpoint the dashboard serves; per-seed subdir so a multi-seed
+        # stability run never overwrites another seed's checkpoint
+        ckpt = os.path.join(ckpt, "magnitude", f"seed{seed}")
         os.makedirs(ckpt, exist_ok=True)
     torch.save(hybrid.state_dict(), os.path.join(ckpt, "hybrid.pt"))
     joblib.dump(xgb.model, os.path.join(ckpt, "xgb.pkl"))
@@ -321,7 +322,7 @@ def run_pair(pair: str, interval: str = "4h", bars: int = None,
     meta = {
         "pair": cfg.name, "slug": cfg.slug, "label": cfg.label,
         "target": target, "magnitude_vs_atr": mag_metrics,
-        "seed": SEED, "saved_at": _dt.datetime.now().isoformat(timespec="seconds"),
+        "seed": seed, "saved_at": _dt.datetime.now().isoformat(timespec="seconds"),
         "interval": interval,
         # Mark dry runs so a 2-epoch/500-bar checkpoint can never be mistaken
         # for a real result on the dashboard or in the report.
@@ -345,8 +346,17 @@ def run_pair(pair: str, interval: str = "4h", bars: int = None,
     }
     json.dump(meta, open(os.path.join(ckpt, "meta.json"), "w"), indent=2, default=str)
     os.makedirs("results/pair_metrics", exist_ok=True)
-    _mfile = f"{cfg.slug}_magnitude" if magnitude else cfg.slug
-    json.dump(meta, open(f"results/pair_metrics/{_mfile}.json", "w"), indent=2, default=float)
+    if magnitude:
+        # always persist a per-seed record; also (re)write the canonical
+        # unsuffixed file for the default seed so single-run consumers keep
+        # finding results/pair_metrics/<slug>_magnitude.json
+        json.dump(meta, open(f"results/pair_metrics/{cfg.slug}_magnitude_seed{seed}.json", "w"),
+                  indent=2, default=float)
+        if seed == SEED:
+            json.dump(meta, open(f"results/pair_metrics/{cfg.slug}_magnitude.json", "w"),
+                      indent=2, default=float)
+    else:
+        json.dump(meta, open(f"results/pair_metrics/{cfg.slug}.json", "w"), indent=2, default=float)
     print(f"[train_pairs] {cfg.slug}: Hybrid DirAcc {meta['hybrid']['DirAcc']:.4f} "
           f"MAE {meta['hybrid']['MAE']:.5f} | wf-expert {wf_da:.4f} | "
           f"GARCH {garch_m['DirAcc']:.4f} | ARIMA {arima_m['DirAcc'] if arima_m else float('nan'):.4f}")
