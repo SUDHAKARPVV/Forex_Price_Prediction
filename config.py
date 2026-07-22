@@ -29,6 +29,15 @@ from typing import List
 # --------------------------------------------------------------------------
 RESULTS_DIR = "results"
 
+# HAR-RV experiment (opt-in via FOREX_HAR_RV=1): appends 3 realized-vol features
+# (daily/weekly/monthly) to the TECHNICAL block. Env-gated so the default 37-
+# feature world -- and every committed checkpoint the dashboard serves -- is
+# untouched; only a run that explicitly sets FOREX_HAR_RV sees the 40-feature
+# layout. Must be read here (import time) so all downstream dims stay consistent.
+_HAR_RV = os.environ.get("FOREX_HAR_RV", "0") == "1"
+_N_HAR = 3 if _HAR_RV else 0
+HAR_RV_FEATURE_NAMES = ["har_rv_d", "har_rv_w", "har_rv_m"]
+
 
 def results_path(*parts: str) -> str:
     """Path under results/. Callers that WRITE should makedirs on the parent."""
@@ -40,7 +49,8 @@ class DataConfig:
     currency_pairs: List[str] = field(default_factory=lambda: ["XAU/USD", "XAG/USD"])
     lookback: int = 60          # T
     horizon: int = 10           # k
-    n_technical_features: int = 18    # OHLC log-returns(4) + RSI + MACD hist + BB width + volume z
+    n_technical_features: int = 18 + _N_HAR   # +3 HAR-RV when FOREX_HAR_RV=1
+                                      # OHLC log-returns(4) + RSI + MACD hist + BB width + volume z
                                       # + ATR% + ROC-10 + Stochastic %K + EMA12/26 ratio
                                       # + env_dev20 + bb_pctb (price-position-vs-band; the
                                       #   envelope signal -- band WIDTH alone carried no direction)
@@ -51,7 +61,7 @@ class DataConfig:
                                       # + diffusion breadth index) + 4 one-hot buy/sell/hold/none
                                       # trading-signal features (data/sentiment.py:derive_trading_signals)
     n_signal_classes: int = 4         # buy / sell / hold / none -- the LAST 4 sentiment columns
-    n_total_features: int = 37        # must equal sum of streams (37 -> 64 fusion)
+    n_total_features: int = 37 + _N_HAR   # 37 (or 40 with FOREX_HAR_RV); sum of streams -> 64 fusion
     train_frac: float = 0.7
     val_frac: float = 0.15
     # test_frac is implicit = 1 - train_frac - val_frac

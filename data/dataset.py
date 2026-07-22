@@ -180,6 +180,32 @@ def export_sentiment_features(panel: FXPanel, exports_dir: str = "exports",
 PAIR_TICKERS = {name: cfg.ticker for name, cfg in _PAIRS_CFG.items()}
 
 
+def add_har_rv_features(panel: FXPanel) -> FXPanel:
+    """Insert 3 HAR realized-vol features (daily/weekly/monthly trailing realized
+    vol) into the TECHNICAL block of a loaded panel -- the FOREX_HAR_RV=1
+    experiment. Computed causally from close (rolling sums of r^2, sqrt); placed
+    at index 18 (after the base technical features, before macro) so the
+    quant/text split stays coherent with the env-bumped n_technical_features.
+    Pre-check (analysis/har_rv_scan_gold.py) showed these add magnitude signal
+    beyond atr_pct (incremental spearman ~+0.11..0.17)."""
+    import dataclasses
+    from config import HAR_RV_FEATURE_NAMES
+    if all(n in panel.feature_names for n in HAR_RV_FEATURE_NAMES):
+        return panel                                  # already augmented
+    close = np.asarray(panel.close, dtype=np.float64)
+    logc = np.log(close)
+    r2 = np.diff(logc, prepend=logc[0]) ** 2
+    def _rv(w):
+        return np.sqrt(pd.Series(r2).rolling(w, min_periods=max(2, w // 4)).sum().to_numpy())
+    har = np.column_stack([_rv(24), _rv(120), _rv(480)])          # 1d / 1w / ~1m
+    har = np.nan_to_num(har, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    base = 18                                          # base technical count (before HAR)
+    feats = np.concatenate([panel.features[:, :base], har, panel.features[:, base:]], axis=1)
+    names = list(panel.feature_names[:base]) + list(HAR_RV_FEATURE_NAMES) + list(panel.feature_names[base:])
+    assert feats.shape[1] == DATA_CFG.n_total_features, (feats.shape[1], DATA_CFG.n_total_features)
+    return dataclasses.replace(panel, features=feats.astype(np.float32), feature_names=names)
+
+
 def build_fx_panel(
     pair: str = "XAU/USD",
     n_days: int = 1500,
@@ -220,7 +246,12 @@ def build_fx_panel(
         panel_csv = panel_csv_path(pair)
 
     if source == "panel":
-        return load_panel_csv(panel_csv)
+        panel = load_panel_csv(panel_csv)
+        # FOREX_HAR_RV=1 bumps config to 21 technical / 40 total -> append the 3
+        # HAR realized-vol features to the frozen 37-feature panel so dims match.
+        if DATA_CFG.n_technical_features > 18:
+            panel = add_har_rv_features(panel)
+        return panel
 
     if source == "real":
         real_ticker = real_ticker or PAIR_TICKERS.get(pair, "GC=F")
@@ -372,8 +403,13 @@ def load_panel_csv(path: str = "exports/feature_panel.csv") -> FXPanel:
     df.index = pd.to_datetime(df.index, format="mixed", errors="coerce")
     meta_cols = ["close", "realized_vol", "atr"]
     feat_cols = [c for c in df.columns if c not in meta_cols]
-    assert len(feat_cols) == DATA_CFG.n_total_features, (
-        f"panel CSV has {len(feat_cols)} feature columns, expected {DATA_CFG.n_total_features}"
+    # The frozen panel on disk is always the BASE layout; FOREX_HAR_RV appends the
+    # HAR features AFTER load (build_fx_panel -> add_har_rv_features), so accept the
+    # base count here (n_total minus the HAR add-ons) rather than the bumped total.
+    from config import _N_HAR
+    _expected_on_disk = DATA_CFG.n_total_features - _N_HAR
+    assert len(feat_cols) == _expected_on_disk, (
+        f"panel CSV has {len(feat_cols)} feature columns, expected {_expected_on_disk}"
     )
     return FXPanel(
         features=df[feat_cols].values.astype(np.float32),

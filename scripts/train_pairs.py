@@ -221,12 +221,17 @@ def run_pair(pair: str, interval: str = "4h", bars: int = None,
     # rebuilds from the pair's own feeds. interval="1h" is the H1 pipeline.
     panel = build_fx_panel(pair=pair, n_days=200000, seed=seed, source=source,
                            real_interval=interval)
+    _har = DATA_CFG.n_technical_features > 18        # FOREX_HAR_RV=1 -> 40-feature panel
+    if _har:
+        print(f"[train_pairs] HAR-RV experiment: panel augmented to "
+              f"{panel.features.shape[1]} features ({panel.feature_names[18:21]})")
     if smoke:
         panel = _truncate_panel(panel, bars)
         print(f"[train_pairs] SMOKE: truncated to last {len(panel.close)} bars "
               f"({panel.dates[0]} -> {panel.dates[-1]})")
-    else:
-        # Never overwrite the frozen panel from a truncated smoke run.
+    elif not _har:
+        # Never overwrite the frozen panel from a truncated smoke run -- and NEVER
+        # from a HAR run (that would clobber the canonical 37-feature panel).
         save_panel_csv(panel, panel_csv_path(pair))
     tr, va, te = time_split(panel)
     if train_stride > 1:
@@ -365,12 +370,13 @@ def run_pair(pair: str, interval: str = "4h", bars: int = None,
 
     # save per-pair checkpoint (dashboard loads exports/dashboard/<slug>/)
     import joblib
+    _hs = "_harrv" if _har else ""       # HAR namespacing so it never clobbers the 37-feat result
     ckpt = checkpoint_dir(pair)
     if magnitude:
         # keep the magnitude experiment fully separate from the direction
         # checkpoint the dashboard serves; per-seed subdir so a multi-seed
         # stability run never overwrites another seed's checkpoint
-        ckpt = os.path.join(ckpt, "magnitude", f"seed{seed}")
+        ckpt = os.path.join(ckpt, f"magnitude{_hs}", f"seed{seed}")
         os.makedirs(ckpt, exist_ok=True)
     torch.save(hybrid.state_dict(), os.path.join(ckpt, "hybrid.pt"))
     joblib.dump(xgb.model, os.path.join(ckpt, "xgb.pkl"))
@@ -411,11 +417,12 @@ def run_pair(pair: str, interval: str = "4h", bars: int = None,
     if magnitude:
         # always persist a per-seed record; also (re)write the canonical
         # unsuffixed file for the default seed so single-run consumers keep
-        # finding results/pair_metrics/<slug>_magnitude.json
-        json.dump(meta, open(f"results/pair_metrics/{cfg.slug}_magnitude_seed{seed}.json", "w"),
+        # finding results/pair_metrics/<slug>_magnitude.json. HAR runs carry the
+        # _harrv suffix and never touch the canonical 37-feature files.
+        json.dump(meta, open(f"results/pair_metrics/{cfg.slug}_magnitude{_hs}_seed{seed}.json", "w"),
                   indent=2, default=float)
         if seed == SEED:
-            json.dump(meta, open(f"results/pair_metrics/{cfg.slug}_magnitude.json", "w"),
+            json.dump(meta, open(f"results/pair_metrics/{cfg.slug}_magnitude{_hs}.json", "w"),
                       indent=2, default=float)
     else:
         json.dump(meta, open(f"results/pair_metrics/{cfg.slug}.json", "w"), indent=2, default=float)
