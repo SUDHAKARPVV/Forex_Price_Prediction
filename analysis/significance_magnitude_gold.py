@@ -32,8 +32,16 @@ from data.pairs import checkpoint_dir, panel_csv_path, get_pair
 
 PAIR, SLUG = "XAU/USD", "XAUUSD"
 K = DATA_CFG.horizon
-MAG9 = os.path.join(checkpoint_dir(PAIR), "magnitude", "seed9")
-ARR = f"results/significance_arrays_{SLUG}.npz"
+# HAR variant: FOREX_HAR_RV=1 -> evaluate the 40-feature HAR magnitude model
+# (build_fx_panel auto-augments the panel via config), separate cache + output.
+_HAR = os.environ.get("FOREX_HAR_RV", "0") == "1"
+_SUF = "_harrv" if _HAR else ""
+MAG9 = os.path.join(checkpoint_dir(PAIR), f"magnitude{_SUF}", "seed9")
+ARR = f"results/significance_arrays{_SUF}_{SLUG}.npz"
+# reproduction guard: the committed seed-9 point-estimate spearman for this variant
+_pubf = f"results/pair_metrics/{SLUG}_magnitude{_SUF}_seed9.json"
+_PUB_SP = (json.load(open(_pubf))["magnitude_vs_atr"]["model_spearman"]
+           if os.path.exists(_pubf) else 0.3287)
 RNG = np.random.default_rng(7)
 
 
@@ -101,7 +109,7 @@ if os.path.exists(ARR):
     print(f"[sig] loaded cached arrays ({ARR})")
 act_t = d["actual_t"]; model_t = d["model_t"]; atr_t = d["atr_t"]; garch_t = d["garch_t"]
 _repro = spearmanr(model_t, act_t).statistic
-assert abs(_repro - 0.3287) < 0.02, f"repro failed: {_repro:.4f}"
+assert abs(_repro - _PUB_SP) < 0.02, f"repro failed: {_repro:.4f} vs committed {_PUB_SP:.4f}"
 print(f"reproduction OK (test spearman {_repro:.4f}); n_test={len(act_t):,}\n")
 
 # ---- rolling-median large-move correctness per origin (for the accuracy test) ----
@@ -187,5 +195,5 @@ summary = {"pair": PAIR, "n_test": int(len(act_t)), "repro_spearman": _repro,
            "significant_vs_baselines": bool(
                (min(boot.get("atr_spearman", {}).get("p", 1), boot.get("garch_spearman", {}).get("p", 1)) < 0.05)
                and len(_mcs_incl) < 3)}
-json.dump(summary, open(f"results/significance_magnitude_{SLUG}.json", "w"), indent=2, default=float)
-print(f"\nwritten to results/significance_magnitude_{SLUG}.json")
+json.dump(summary, open(f"results/significance_magnitude{_SUF}_{SLUG}.json", "w"), indent=2, default=float)
+print(f"\nwritten to results/significance_magnitude{_SUF}_{SLUG}.json")
