@@ -34,3 +34,6 @@ exports/dashboard/*/magnitude/seed*/garch_expert_preds.npz
 
 # Conformal forecast-array cache (regenerable; delete to force pipeline rebuild)
 results/conformal_arrays_*.npz
+
+# Significance-test forecast-array cache (regenerable)
+results/significance_arrays_*.npz

@@ -1,0 +1,32 @@
+{
+  "pair": "XAU/USD",
+  "n_test": 9297,
+  "repro_spearman": 0.3301539847628197,
+  "dm": {
+    "model_vs_atr": [
+      1.107085943222046,
+      0.2682567723979582
+    ],
+    "model_vs_garch": [
+      1.1343837513002761,
+      0.2566336118530371
+    ]
+  },
+  "scales": {
+    "model": 0.9415245652198792,
+    "atr": 1.5614920854568481,
+    "garch": 0.6598638364475058
+  },
+  "mcs": {
+    "pvalues": {
+      "Hybrid": 0.577,
+      "GARCH_sigma": 0.577,
+      "atr_pct": 1.0
+    },
+    "included": [
+      "GARCH_sigma",
+      "Hybrid",
+      "atr_pct"
+    ]
+  }
+}
