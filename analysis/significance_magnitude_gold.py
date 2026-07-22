@@ -128,15 +128,17 @@ def block_boot(stat_fn, n_boot=2000, block=50):
 print("=" * 68)
 print("1. BLOCK BOOTSTRAP of the reported-metric differences (model - baseline)")
 print("=" * 68)
+boot = {}
 for bl in ("atr", "garch"):
     dsp = block_boot(lambda idx: (spearmanr(xok["model"][idx], a_ok[idx]).statistic
                                   - spearmanr(xok[bl][idx], a_ok[idx]).statistic))
     dac = block_boot(lambda idx: (cor["model"][idx].mean() - cor[bl][idx].mean()))
-    for nm, arr in (("spearman", dsp), ("large-move acc", dac)):
+    for nm, key, arr in (("spearman", "spearman", dsp), ("large-move acc", "acc", dac)):
         lo, hi = np.percentile(arr, [2.5, 97.5]); p = float((arr <= 0).mean())
         star = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
         print(f"  model - {bl:5s} {nm:15s}: mean {arr.mean():+.4f}  95%CI[{lo:+.4f},{hi:+.4f}]  "
               f"p(diff<=0)={p:.4f} {star}")
+        boot[f"{bl}_{key}"] = {"mean": float(arr.mean()), "ci_lo": float(lo), "ci_hi": float(hi), "p": p}
 print()
 
 print("=" * 68)
@@ -173,8 +175,17 @@ try:
 except Exception as ex:
     print(f"  MCS skipped ({type(ex).__name__}: {ex}); DM + bootstrap above are the primary tests.")
 
+_dm_a, _dm_g = dm(e_m, e_a), dm(e_m, e_g)
+_mcs_incl = (mcs_res or {}).get("included") or []
 summary = {"pair": PAIR, "n_test": int(len(act_t)), "repro_spearman": _repro,
-           "dm": {"model_vs_atr": dm(e_m, e_a), "model_vs_garch": dm(e_m, e_g)},
-           "scales": {"model": c_m, "atr": c_a, "garch": c_g}, "mcs": mcs_res}
+           "bootstrap": boot,
+           "dm": {"model_vs_atr": {"stat": _dm_a[0], "p": _dm_a[1]},
+                  "model_vs_garch": {"stat": _dm_g[0], "p": _dm_g[1]}},
+           "scales": {"model": c_m, "atr": c_a, "garch": c_g}, "mcs": mcs_res,
+           # headline verdict the dashboard reads: significant only if the model
+           # beats a baseline at p<0.05 on a bootstrap metric AND MCS drops that baseline
+           "significant_vs_baselines": bool(
+               (min(boot.get("atr_spearman", {}).get("p", 1), boot.get("garch_spearman", {}).get("p", 1)) < 0.05)
+               and len(_mcs_incl) < 3)}
 json.dump(summary, open(f"results/significance_magnitude_{SLUG}.json", "w"), indent=2, default=float)
 print(f"\nwritten to results/significance_magnitude_{SLUG}.json")

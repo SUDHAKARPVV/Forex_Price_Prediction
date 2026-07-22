@@ -1298,45 +1298,45 @@ elif page.startswith("📈"):
             mfig.update_layout(barmode="group", height=320, template="plotly_white",
                                yaxis_title="score (higher = better)", margin=dict(l=0, r=0, t=10, b=0))
             st.plotly_chart(mfig, use_container_width=True)
+            # ---- point estimates (seed level) ----
             verdict = mag.get("verdict", "")
             if verdict.startswith("ROBUST"):
-                st.success(
-                    f"**Robust positive result.** Across all {n_tot} seeds the 37-feature Hybrid "
-                    f"forecasts move-magnitude **better than ATR%** on both rank skill "
-                    f"(+{sp_edge['mean']:.3f}) and large-move accuracy ({ac_edge['mean']*100:+.1f}pp). "
-                    f"Direction is unpredictable at H1, but its **magnitude is** — and the model adds "
-                    f"genuine value over the simple indicator.", icon="📐")
+                st.info(
+                    f"**Move-magnitude — point estimates.** Across all {n_tot} seeds (spread ≈0) the "
+                    f"Hybrid's rank skill ({m_sp['mean']:.3f}) exceeds ATR% ({a_sp['mean']:.3f})"
+                    + (f" and GARCH-σ ({g_sp['mean']:.3f})" if has_g else "")
+                    + ". Direction is unpredictable at H1; magnitude is forecastable. But whether "
+                      "that edge is *statistically* real is the next question ⤵", icon="📐")
             elif verdict.startswith("FRAGILE"):
                 st.warning(
                     f"**Fragile.** Only {n_beat}/{n_tot} seeds beat ATR% on both metrics — the single-seed "
-                    f"edge does not survive re-seeding. Honest reading: gold volatility is forecastable, "
-                    f"but a simple ATR% suffices; the deep model adds no reliable magnitude skill.", icon="⚖️")
+                    f"edge does not survive re-seeding.", icon="⚖️")
             else:
-                st.info(f"**Marginal.** Mean edge positive but within the seed spread "
-                        f"(spearman {sp_edge['mean']:+.3f}±{sp_edge['std']:.3f}, "
-                        f"acc {ac_edge['mean']*100:+.1f}±{ac_edge['std']*100:.2f}pp).", icon="⚖️")
-            # the headline "Hybrid > GARCH" verdict
-            gv = mag.get("garch_verdict", "")
-            if gv.startswith("ROBUST"):
-                gse = agg["model_vs_garch_spearman_edge"]; gae = agg["model_vs_garch_acc_edge"]
-                st.success(
-                    f"**Hybrid > both classical baselines on the predictable target.** Across all "
-                    f"{n_tot} seeds the Hybrid beats **GARCH-σ** — the econometric volatility model — on "
-                    f"both metrics (rank +{gse['mean']:.3f}, accuracy {gae['mean']*100:+.1f}pp), as well "
-                    f"as the simple ATR% indicator (the two baselines are comparable here). GARCH wins "
-                    f"*direction* (via drift); the Hybrid wins *magnitude* (where real signal lives). "
-                    f"Each model wins where its structure fits — and ours wins the target that carries "
-                    f"signal. **This is the honest headline result.**", icon="🏆")
-            elif gv.startswith("FRAGILE"):
-                st.warning(f"**Does not clear GARCH-σ on every seed** "
-                           f"({mag.get('n_seeds_beating_garch_both','?')}/{n_tot}). The model beats the "
-                           f"simple ATR% indicator but not the classical GARCH volatility model reliably — "
-                           f"honest scope: beats the simple baseline, ties/loses to the econometric one.",
-                           icon="⚖️")
-            elif gv.startswith("MARGINAL"):
-                st.info("**Beats GARCH-σ on average but within seed noise** — suggestive, not decisive.",
-                        icon="⚖️")
-            st.caption("Scope: the target is |net displacement| over 10 bars, not RMS realised "
-                       "volatility. GARCH-σ = √(Σ per-step GARCH(1,1) variances), computed once and "
-                       "reused across seeds (it is seed-independent).")
+                st.info(f"**Marginal.** Mean edge positive but within the seed spread.", icon="⚖️")
+            # ---- statistical significance: the decisive, honest verdict ----
+            sig = load_json(f"results/significance_magnitude_{PCFG.slug}.json")
+            if sig is not None:
+                incl = (sig.get("mcs") or {}).get("included") or []
+                ba = sig.get("bootstrap", {})
+                pa = ba.get("atr_spearman", {}).get("p"); pg = ba.get("garch_spearman", {}).get("p")
+                if sig.get("significant_vs_baselines"):
+                    st.success(
+                        f"**Statistically significant.** The Hybrid's magnitude advantage clears "
+                        f"significance — block-bootstrap p<0.05 (vs ATR% p≈{pa:.2f}, vs GARCH-σ p≈{pg:.2f}) "
+                        f"and the Model Confidence Set drops a baseline. A genuine edge, not noise.",
+                        icon="✅")
+                else:
+                    st.warning(
+                        f"**Not statistically significant.** A Hansen Model Confidence Set (90%) includes "
+                        f"**all {len(incl)}** forecasters — Hybrid, ATR% and GARCH-σ are statistically "
+                        f"**indistinguishable** on this test set. Block-bootstrap p for the Hybrid's rank "
+                        f"advantage: vs ATR% p≈{pa:.2f}, vs GARCH-σ p≈{pg:.2f} (both >0.05); Diebold–Mariano "
+                        f"ns. The autocorrelation of overlapping 10-bar windows shrinks the effective "
+                        f"sample, so the ~+0.02 rank edge is within noise. **Honest conclusion: the Hybrid "
+                        f"matches — does not significantly beat — the classical volatility baselines on "
+                        f"magnitude. The calibrated conformal (ACI) uncertainty is the genuinely novel, "
+                        f"defensible contribution.**", icon="⚖️")
+            st.caption("Scope: target is |net displacement| over 10 bars, not RMS realised vol. "
+                       "Significance = block-bootstrap + Diebold–Mariano + Hansen Model Confidence Set "
+                       "on the seed-9 forecasts (results/significance_magnitude_XAUUSD.json).")
 
