@@ -1,0 +1,27 @@
+{
+  "slug": "XAUUSD",
+  "levels": {
+    "0.80": {
+      "target": 0.8,
+      "gaussian": 0.6331827471227278,
+      "scalar_conformal": 0.6189415940626009,
+      "sigma_conditional": 0.6310745401742498
+    },
+    "0.90": {
+      "target": 0.9,
+      "gaussian": 0.7287081854361621,
+      "scalar_conformal": 0.757620737872432,
+      "sigma_conditional": 0.764268043454878
+    },
+    "0.95": {
+      "target": 0.95,
+      "gaussian": 0.7896740884156179,
+      "scalar_conformal": 0.84459503065505,
+      "sigma_conditional": 0.8484564913412929
+    }
+  },
+  "mean_abs_gap_scalar": 0.1429475458033057,
+  "mean_abs_gap_conditional": 0.13540030834319314,
+  "conditional_improvement_pp": 0.75,
+  "promising": false
+}
