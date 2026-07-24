@@ -106,6 +106,13 @@ def run(
     price_predictions_by_model = {}  # for the price-level chart
 
     def record_price_predictions(name, y_true, y_pred, horizon_idx=0):
+        # Capped/strided baselines (ARIMA/GARCH under FOREX_BASELINE_MAX_ORIGINS)
+        # have fewer rows than the full test set, so their forecasts can't be
+        # reconstructed against the full origin_close (broadcast error at H1 where
+        # test=9297 > cap=1500). The price-level chart is only meaningful for the
+        # full-length Hybrid anyway -- skip mismatched-length models.
+        if len(y_true) != len(test_ds.indices):
+            return
         dates, actual, predicted = get_price_level_series(test_ds, y_true, y_pred, panel, horizon_idx=horizon_idx)
         price_predictions_by_model["_dates"] = dates
         price_predictions_by_model["_actual"] = actual
@@ -118,6 +125,10 @@ def run(
         import os
 
         try:
+            if len(y_true) != len(test_ds.indices):
+                print(f"[export] {name}: {len(y_true)} strided baseline origins "
+                      f"(< {len(test_ds.indices)} test) -> full-length CSV skipped")
+                return
             os.makedirs("results", exist_ok=True)
             origin_dates = [panel.dates[t] for t in test_ds.indices]
             k = y_true.shape[1]
